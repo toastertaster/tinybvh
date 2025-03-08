@@ -1,4 +1,4 @@
-﻿/*
+/*
 The MIT License (MIT)
 
 Copyright (c) 2024-2025, Jacco Bikker / Breda University of Applied Sciences.
@@ -192,6 +192,10 @@ THE SOFTWARE.
 #include <cstring>
 #endif
 #include <cstdint>
+
+namespace tinybvh {
+static std::function<void(float)> progress_tracker = [](float) {};
+}
 
 // aligned memory allocation
 // note: formally size needs to be a multiple of 'alignment'. See:
@@ -5086,6 +5090,7 @@ void BVH::BuildAVX()
 	// subdivide recursively
 	ALIGNED( 64 ) uint32_t task[128], taskCount = 0, nodeIdx = 0;
 	BVHNode& root = bvhNode[0];
+	const auto recp_total = 1/float(root.triCount); auto done = 0ul;
 	const bvhvec3 minDim = (root.aabbMax - root.aabbMin) * 1e-7f;
 	while (1)
 	{
@@ -5157,7 +5162,10 @@ void BVH::BuildAVX()
 				float ANLR6 = BVH_FAR; PROCESS_PLANE( a, 6, ANLR6, lN6, rN0, lb6, rb0 ); // least likely split
 			}
 			float noSplitCost = (float)node.triCount * c_int;
-			if (splitCost >= noSplitCost) break; // not splitting is better.
+			if (splitCost >= noSplitCost) {
+				progress_tracker((done+=node.triCount)*recp_total);
+				break; // not splitting is better.
+			}
 			// in-place partition
 			const float rpd = (*(bvhvec3*)&rpd4)[bestAxis], nmin = (*(bvhvec3*)&nmin4)[bestAxis];
 			uint32_t t, fr = primIdx[src];
@@ -5168,7 +5176,10 @@ void BVH::BuildAVX()
 			}
 			// create child nodes and recurse
 			const uint32_t leftCount = src - node.leftFirst, rightCount = node.triCount - leftCount;
-			if (leftCount == 0 || rightCount == 0) break; // should not happen.
+			if (leftCount == 0 || rightCount == 0) {
+				progress_tracker((done+=node.triCount)*recp_total);
+				break; // should not happen.
+			}
 			*(__m256*)& bvhNode[n] = _mm256_xor_ps( bestLBox, signFlip8 );
 			bvhNode[n].leftFirst = node.leftFirst, bvhNode[n].triCount = leftCount;
 			node.leftFirst = n++, node.triCount = 0, newNodePtr += 2;
