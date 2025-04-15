@@ -45,29 +45,31 @@ A more complete overview of tinybvh functionality can be found in the [Basic Use
 # How To Use
 The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_minimal.cpp for an example. A Visual Studio 'solution' (.sln/.vcxproj) is included, as well as a CMake file. That being said: The examples consists of only a single source file, which can be compiled with clang or g++, e.g.:
 
-````g++ -std=c++20 -mavx tiny_bvh_minimal.cpp -o tiny_bvh_minimal````
+````g++ tiny_bvh_minimal.cpp````
 
 The single-source sample **ASCII test renderer** can be compiled with
 
-````g++ -std=c++20 -mavx tiny_bvh_renderer.cpp -o tiny_bvh_renderer````
+````g++ tiny_bvh_renderer.cpp -o tiny_bvh_renderer````
 
 The cross-platform fenster-based single-source **bitmap renderer** can be compiled with
 
-````g++ -std=c++20 -mavx -mwindows -O3 tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on windows)
+````g++ -mwindows -O3 tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on windows)
 
-```g++ -std=c++20 -mavx -O3 -framework Cocoa tiny_bvh_fenster.cpp -o tiny_bvh_fenster``` (on macOS)
+````g++ -framework -O3 Cocoa tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on macOS)
 
 The multi-threaded **path tracing** demo can be compiled with
 
-````g++ -std=c++20 -mavx -mwindows -O3 tiny_bvh_pt.cpp -o tiny_bvh_pt```` (on windows)
+````g++ -mwindows -O3 tiny_bvh_pt.cpp -o tiny_bvh_pt```` (on windows)
 
 The **performance measurement tool** can be compiled with:
 
-````g++ -std=c++20 -mavx2 -mfma -Ofast tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
+````g++ -mavx2 -mfma -Ofast tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 1.4.3
+# Version 1.5.2
 
-Version 1.4.0 introduces a new BVH layout for fast single-ray traversal on CPU: BVH8_CPU. This supersedes the previous fastest scheme, BVH4_CPU. 
+Version 1.5.0 introduced a new fast layout for x86/x64 systems that do not (or cannot be presumed to) support AVX2. For those, please use BVH4_CPU form optimal performance (about 80% of the fastest AVX2 code).
+
+Version 1.4.0 introduced a new BVH layout for fast single-ray traversal on CPU: BVH8_CPU. This supersedes the previous fastest scheme, BVH4_CPU. 
 
 Version 1.1.0 introduced a <ins>change to the API</ins>. The single BVH class with multiple layouts has been replaced with a BVH class per layout. You can simply instantiate the desired layout; conversion (and data ownership) is then handled properly by the library. Examples:
 
@@ -110,6 +112,7 @@ This version of the library includes the following functionality:
 * Fast binned SAH BVH builder using NEON intrinsices, by [wuyakuma](https://github.com/wuyakuma)
 * Customizable SAH parameters
 * TLAS builder with instancing and fast TLAS/BLAS traversal, even for 'mixed trees'
+* TLAS masking (similar to [OptiX](https://raytracing-docs.nvidia.com/optix7/guide/optix_guide.230712.A4.pdf)), by [Romain Augier](https://github.com/romainaugier).
 * Double-precision binned SAH BVH builder
 * Support for custom geometry and mixed scenes
 * Example code for GPU TLAS/BLAS traversal (dragon invasion demo, tiny_bvh_gpu2.cpp)
@@ -123,7 +126,9 @@ This version of the library includes the following functionality:
 * Sphere/BVH collision detection via BVH::IntersectSphere(..)
 * BVH (de)serialization for most layouts
 * Fast AVX2 ray tracing: Implements the 2017 paper by [Fuetterling et al.](https://web.cs.ucdavis.edu/~hamann/FuetterlingLojewskiPfreundtHamannEbertHPG2017PaperFinal06222017.pdf)
+* Fast SSE4.2 ray tracing: A modified version of the AVX2 implementation using just SSE4.2 achieves 80% of AVX2 performance.
 * Fast triangle intersection: Implements the 2016 paper by [Baldwin & Weber](https://jcgt.org/published/0005/03/03/paper.pdf)
+* 'Watertight' ray/triangle intersection, based on the [paper](https://jcgt.org/published/0002/01/05/paper.pdf) by Woop et al.
 * OpenCL traversal example code: Aila & Laine, 4-way quantized, CWBVH
 * OpenCL support for MacOS, by [wuyakuma](https://github.com/wuyakuma)
 * Support for WASM / EMSCRIPTEN, g++, clang, Visual Studio
@@ -145,21 +150,25 @@ Plans, ordered by priority:
   * Improve speed of SBVH builder
 * Features & outstanding issues:
   * 'Watertight' triangle intersection option
-  * Load/save/Optimize/Refit for BVH8_CPU
+  * Use PARANOID flag to check NaNs and more
 * Demo of tinybvh on GPU using other apis:
   * Ray tracing in pure OpenGL
   * Ray tracing in pure DirectX
+  * SDL3 sample application
 * Bridge to rt hw / layouts:
   * Produce a BVH for Intel rt hw (mind the quads)
   * Produce a BVH for AMD rt hw
   * Use inline asm on AMD for aabb/tri intersect
 * Comparisons / experiments:
-  * Other ray distributions in speedtest
   * Memory use analysis in speedtest
   * DXR renderer to compare against hw rt
 * CPU single-ray performance
+  * Experiment with 1, 4 and 8 tris in BVH8_CPU
   * Reverse-engineer Embree & PhysX
   * Combination of TLAS and packet traversal
+* Ease-of-use
+  * Robust default origin offset
+  * Engine layer
   
 # tinybvh in the Wild
 A list of projects using tinybvh:
@@ -175,7 +184,7 @@ Created or know about other projects? [Let me know](mailto:bikker.j@gmail.com)!
 Questions, remarks? Contact me at bikker.j@gmail.com ~~or on twitter: @j_bikker,~~ or BlueSky: @jbikker.bsky.social .
 
 # License
-This library is made available under the MIT license, which starts as follows: "Permission is hereby granted, free of charge, .. , to deal in the Software **without restriction**". Enjoy.
+This library is made available under the MIT license, which starts as follows: "Permission is hereby granted, free of charge, .. , to deal in the Software **without restriction**". Enjoy. If you are using this work in your research, please cite TinyBVH: Details are available in BibTeX and APA format, see the 'About' section for this repo on Github.
 
 
 ![Output of the sample wavefront path tracer](images/wavefront.png)

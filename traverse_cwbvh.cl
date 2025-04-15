@@ -75,8 +75,8 @@ inline float fmax_fmax( const float a, const float b, const float c )
 }
 
 #ifdef USE_VLOAD_VSTORE
-#define STACK_POP(X) { unsigned* a = &stack[--stackPtr]; X = vload2( 0, a ); }
-#define STACK_PUSH(X) { unsigned* a = &stack[stackPtr++]; vstore2( X, 0, a ); }
+#define STACK_POP(X) { unsigned* a = (unsigned*)&stack[--stackPtr]; X = vload2( 0, a ); }
+#define STACK_PUSH(X) { unsigned* a = (unsigned*)&stack[stackPtr++]; vstore2( X, 0, a ); }
 #else
 #define STACK_POP(X) { X = stack[--stackPtr]; }
 #define STACK_PUSH(X) { stack[stackPtr++] = X; }
@@ -307,7 +307,7 @@ float4 traverse_cwbvh( global const float4* cwbvhNodes, global const float4* cwb
 		#else
 			// Möller-Trumbore intersection; triangles are stored as 3x16 bytes,
 			// with the original primitive index in the (otherwise unused) w 
-			// component of vertex 0.
+			// component of vertex 0. iquilezles.org version.
 			const int triangleIndex = __bfind( tgroup.y ), triAddr = tgroup.x + triangleIndex * 3;
 			const float3 e1 = cwbvhTris[triAddr].xyz;
 			const float3 e2 = cwbvhTris[triAddr + 1].xyz;
@@ -315,14 +315,12 @@ float4 traverse_cwbvh( global const float4* cwbvhNodes, global const float4* cwb
 			tgroup.y -= 1 << triangleIndex;
 			const float3 r = cross( D.xyz, e1 );
 			const float a = dot( e2, r );
-			if (fabs( a ) < 0.0000001f) continue;
 			const float f = 1 / a;
 			const float3 s = O.xyz - v0.xyz;
 			const float u = f * dot( s, r );
-			if (u < 0 || u > 1) continue;
 			const float3 q = cross( s, e2 );
 			const float v = f * dot( D.xyz, q );
-			if (v < 0 || u + v > 1) continue;
+			if (u < 0 || v < 0 || u + v > 1) continue;
 			const float d = f * dot( e1, q );
 			if (d <= 0.0f || d >= tmax) continue;
 			uv = (float2)(u, v), tmax = d;
@@ -540,10 +538,9 @@ bool isoccluded_cwbvh( global const float4* cwbvhNodes, global const float4* cwb
 			const float f = 1 / a;
 			const float3 s = O.xyz - v0;
 			const float u = f * dot( s, r );
-			if (u < 0 || u > 1) continue;
 			const float3 q = cross( s, e2 );
 			const float v = f * dot( D.xyz, q );
-			if (v < 0 || u + v > 1) continue;
+			if (u < 0 || v < 0 || u + v > 1) continue;
 			const float d = f * dot( e1, q );
 			if (d > 0.0f && d < tmax) return true;
 		#endif

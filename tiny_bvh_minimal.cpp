@@ -1,7 +1,8 @@
-// Minimal example for tiny_bvh.h
-
 #define TINYBVH_IMPLEMENTATION
+#define _CRT_SECURE_NO_WARNINGS
 #include "tiny_bvh.h"
+
+// Minimal example for tiny_bvh.h
 
 #include <cstdlib>
 #include <cstdio>
