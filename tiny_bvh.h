@@ -3626,6 +3626,8 @@ void BVH_Verbose::Optimize( const uint32_t iterations, const bool extreme )
 			RefitUp( Nid );
 		}
 		Refit( 0, true );
+
+		progress_tracker((i+1)/(float)iterations);
 	}
 	AlignedFree( sortList );
 }
