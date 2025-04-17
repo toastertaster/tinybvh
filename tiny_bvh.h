@@ -2676,6 +2676,7 @@ void BVH::Optimize( const uint32_t iterations, bool extreme )
 	verbose->ConvertFrom( *this );
 	verbose->Optimize( iterations, extreme );
 	ConvertFrom( *verbose );
+	delete verbose;
 }
 
 // Refitting: For animated meshes, where the topology remains intact. This
