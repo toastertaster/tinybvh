@@ -1,3 +1,6 @@
+# dev
+This is the **development branch** for TinyBVH. New changes will be tested here first.
+
 # tinybvh
 Single-header BVH construction and traversal library written as "Sane C++" (or "C with classes"). Some C++11 is used, e.g. for threading. The library has no dependencies. 
 
@@ -49,23 +52,27 @@ The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look
 
 The single-source sample **ASCII test renderer** can be compiled with
 
-````g++ tiny_bvh_renderer.cpp -o tiny_bvh_renderer````
+````c++ --std=c++17 tiny_bvh_renderer.cpp -o tiny_bvh_renderer````
 
 The cross-platform fenster-based single-source **bitmap renderer** can be compiled with
 
 ````g++ -mwindows -O3 tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on windows)
 
-````g++ -framework -O3 Cocoa tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on macOS)
+````c++ --std=c++17 -framework Cocoa -O3 tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on macOS)
 
 The multi-threaded **path tracing** demo can be compiled with
 
 ````g++ -mwindows -O3 tiny_bvh_pt.cpp -o tiny_bvh_pt```` (on windows)
 
+````c++ --std=c++17 -framework Cocoa -O3 tiny_bvh_pt.cpp -o tiny_bvh_pt```` (on macOS)
+
 The **performance measurement tool** can be compiled with:
 
-````g++ -mavx2 -mfma -Ofast tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
+````g++ -mavx2 -mfma -Ofast tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest```` (on windows)
 
-# Version 1.5.2
+````c++ --std=c++17 -framework OpenCL -Ofast tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest```` (on macOS)
+
+# Version 1.5.6
 
 Version 1.5.0 introduced a new fast layout for x86/x64 systems that do not (or cannot be presumed to) support AVX2. For those, please use BVH4_CPU form optimal performance (about 80% of the fastest AVX2 code).
 
@@ -111,6 +118,7 @@ This version of the library includes the following functionality:
 * Fast binned SAH BVH builder using AVX intrinsics
 * Fast binned SAH BVH builder using NEON intrinsices, by [wuyakuma](https://github.com/wuyakuma)
 * Customizable SAH parameters
+* "End-Point Overlap" BVH cost metric (["On Quality Metrics of Bounding Volume Hierarchies"](https://users.aalto.fi/~ailat1/publications/aila2013hpg_paper.pdf), Aila et al., 2013)
 * TLAS builder with instancing and fast TLAS/BLAS traversal, even for 'mixed trees'
 * TLAS masking (similar to [OptiX](https://raytracing-docs.nvidia.com/optix7/guide/optix_guide.230712.A4.pdf)), by [Romain Augier](https://github.com/romainaugier).
 * Double-precision binned SAH BVH builder
@@ -181,12 +189,20 @@ The tinybvh library can now also be used from Rust, with the [Rust bindings](htt
 Created or know about other projects? [Let me know](mailto:bikker.j@gmail.com)!
 
 # Contact
-Questions, remarks? Contact me at bikker.j@gmail.com ~~or on twitter: @j_bikker,~~ or BlueSky: @jbikker.bsky.social .
+Questions, remarks? Contact me at bikker.j@protonmail.com or BlueSky: @jbikker.bsky.social .
 
 # License
 This library is made available under the MIT license, which starts as follows: "Permission is hereby granted, free of charge, .. , to deal in the Software **without restriction**". Enjoy. If you are using this work in your research, please cite TinyBVH: Details are available in BibTeX and APA format, see the 'About' section for this repo on Github.
 
+# Acknowledgement
+The development of this library is supported by an AMD hardware grant.
 
-![Output of the sample wavefront path tracer](images/wavefront.png)
 
-![Rendered with tinybvh](images/test.png)
+<br><br>
+  
+![Student work: Tamara Heeffer](images/tamara.jpg)
+<p align="center"><i>Image credit: Tamara Heeffer, IGAD / Breda University</i> </p>
+
+<br><br>
+![Student work: Hesam Ghadimi](images/hesam.jpg)
+<p align="center"><i>Image credit: Hesam Ghadimi, IGAD / Breda University</i> </p>
