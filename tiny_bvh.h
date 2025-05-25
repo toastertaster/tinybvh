@@ -5796,6 +5796,7 @@ void BVH::PrepareAVXBuild( const bvhvec4slice& vertices, const uint32_t* indices
 	// reset node pool
 	uint32_t primCount = prims > 0 ? prims : vertices.count / 3;
 	const uint32_t spaceNeeded = primCount * 2;
+	BVH_FATAL_ERROR_IF( spaceNeeded<2, "BVH::BuildAVX( .. ), no primitives." );
 	if (allocatedNodes < spaceNeeded)
 	{
 		AlignedFree( bvhNode );
@@ -5804,7 +5805,8 @@ void BVH::PrepareAVXBuild( const bvhvec4slice& vertices, const uint32_t* indices
 		primIdx = (uint32_t*)AlignedAlloc( primCount * sizeof( uint32_t ) );
 		bvhNode = (BVHNode*)AlignedAlloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedNodes = spaceNeeded;
-		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
+		// memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
+		bvhNode[1] = {};
 		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
 	}
 	else BVH_FATAL_ERROR_IF( !rebuildable, "BVH::BuildAVX( .. ), bvh not rebuildable." );
