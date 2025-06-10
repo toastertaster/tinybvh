@@ -41,10 +41,13 @@ THE SOFTWARE.
 //     using bvhint2 = math::int2;
 //     using bvhint3 = math::int3;
 //     using bvhuint2 = math::uint2;
+//     using bvhuint3 = math::uint3;
+//     using bvhuint4 = math::uint4;
 //     using bvhvec2 = math::float2;
 //     using bvhvec3 = math::float3;
 //     using bvhvec4 = math::float4;
 //     using bvhdbl3 = math::double3;
+//     using bvhmat4 = math::mat4x4;
 //   }
 //
 //	 #define TINYBVH_USE_CUSTOM_VECTOR_TYPES
@@ -88,7 +91,7 @@ THE SOFTWARE.
 // Library version:
 #define TINY_BVH_VERSION_MAJOR	1
 #define TINY_BVH_VERSION_MINOR	5
-#define TINY_BVH_VERSION_SUB	6
+#define TINY_BVH_VERSION_SUB	7
 
 // Run-time checks; disabled by default.
 // #define PARANOID // checks out-of-bound access of slices
@@ -397,15 +400,16 @@ struct bvhuint4
 	union { struct { uint32_t x, y, z, w; }; uint32_t cell[4]; };
 };
 
-#endif // TINYBVH_USE_CUSTOM_VECTOR_TYPES
-
-struct bvhmat4
+struct bvhmat4 // exists only so we can use tinybvh types conveniently in tinyscene.
 {
-	bvhmat4() { memset( cell, 0, sizeof( cell ) ); cell[0] = cell[5] = cell[10] = cell[15] = 1; }
+	bvhmat4() = default;
 	float& operator [] ( const int32_t i ) { return cell[i]; }
 	const float& operator [] ( const int32_t i ) const { return cell[i]; }
-	float cell[16];
+	bvhmat4& operator += ( const bvhmat4& a ) { for (int i = 0; i < 16; i++) cell[i] += a.cell[i]; return *this; }
+	float cell[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 };
+
+#endif // TINYBVH_USE_CUSTOM_VECTOR_TYPES
 
 struct ALIGNED( 32 ) bvhaabb
 {
@@ -605,6 +609,11 @@ inline uint32x4_t SIMD_SETRVECU( uint32_t x, uint32_t y, uint32_t z, uint32_t w 
 {
 	ALIGNED( 64 ) uint32_t data[4] = { x, y, z, w };
 	return vld1q_u32( data );
+}
+inline int32x4_t SIMD_SETRVECS( int32_t x, int32_t y, int32_t z, int32_t w )
+{
+	ALIGNED( 64 ) int32_t data[4] = { x, y, z, w };
+	return vld1q_s32( data );
 }
 #else
 typedef bvhvec4 SIMDVEC4;
@@ -1483,8 +1492,8 @@ loop: R = bvhvec3( tinybvh_rndfloat( s ) - 0.5f, tinybvh_rndfloat( s ) * 0.5f, t
 
 // Fallbacks to be used in the absence of HW SIMD support.
 #ifndef BVH_USESSE
-int32_t BVH4_CPU::Intersect( Ray& ray ) const { BVH_FATAL_ERROR( "BVH4_CPU::Intersect requires SSE. " ); }
-bool BVH4_CPU::IsOccluded( const Ray& ray ) const { BVH_FATAL_ERROR( "BVH4_CPU::IsOccluded requires SSE. " ); }
+int32_t BVH4_CPU::Intersect( Ray& ) const { BVH_FATAL_ERROR( "BVH4_CPU::Intersect requires SSE. " ); }
+bool BVH4_CPU::IsOccluded( const Ray& ) const { BVH_FATAL_ERROR( "BVH4_CPU::IsOccluded requires SSE. " ); }
 #endif
 #if !defined BVH_USEAVX
 void BVH::BuildAVX( const bvhvec4*, const uint32_t ) { BVH_FATAL_ERROR( "BVH::BuildAVX requires AVX." ); }
@@ -1528,6 +1537,20 @@ bool BVH_SoA::IsOccluded( const Ray& ) const { BVH_FATAL_ERROR( "BVH_SoA::IsOccl
 
 #ifndef TINYBVH_USE_CUSTOM_VECTOR_TYPES
 
+bvhmat4 operator*( const float s, const bvhmat4& a )
+{
+	bvhmat4 r;
+	for (uint32_t i = 0; i < 16; i++) r[i] = a[i] * s;
+	return r;
+}
+bvhmat4 operator*( const bvhmat4& a, const bvhmat4& b )
+{
+	bvhmat4 r;
+	for (uint32_t i = 0; i < 16; i += 4) for (uint32_t j = 0; j < 4; ++j)
+		r[i + j] = (a[i + 0] * b[j + 0]) + (a[i + 1] * b[j + 4]) +
+		(a[i + 2] * b[j + 8]) + (a[i + 3] * b[j + 12]);
+	return r;
+}
 bvhvec4::bvhvec4( const bvhvec3& a ) { x = a.x; y = a.y; z = a.z; w = 0; }
 bvhvec4::bvhvec4( const bvhvec3& a, float b ) { x = a.x; y = a.y; z = a.z; w = b; }
 
@@ -6868,8 +6891,8 @@ inline float32x4x2_t _mm256_set1_ps( float v )
 
 inline float32x4x2_t _mm256_and_ps( float32x4x2_t v0, float32x4x2_t v1 )
 {
-	float32x4_t r0 = vandq_s32( v0.val[0], v1.val[0] );
-	float32x4_t r1 = vandq_s32( v0.val[1], v1.val[1] );
+	float32x4_t r0 = vreinterpretq_f32_s32( vandq_s32( vreinterpretq_s32_f32( v0.val[0] ), vreinterpretq_s32_f32( v1.val[0] ) ) );
+	float32x4_t r1 = vreinterpretq_f32_s32( vandq_s32( vreinterpretq_s32_f32( v0.val[1] ), vreinterpretq_s32_f32( v1.val[1] ) ) );
 	return float32x4x2_t{ r0, r1 };
 }
 
@@ -6882,13 +6905,17 @@ inline float32x4x2_t _mm256_max_ps( float32x4x2_t v0, float32x4x2_t v1 )
 
 inline float32x4x2_t _mm256_xor_ps( float32x4x2_t v0, float32x4x2_t v1 )
 {
-	float32x4_t r0 = veorq_s32( v0.val[0], v1.val[0] );
-	float32x4_t r1 = veorq_s32( v0.val[1], v1.val[1] );
+	float32x4_t r0 = vreinterpretq_f32_s32( veorq_s32( vreinterpretq_s32_f32( v0.val[0] ), vreinterpretq_s32_f32( v1.val[0] ) ) );
+	float32x4_t r1 = vreinterpretq_f32_s32( veorq_s32( vreinterpretq_s32_f32( v0.val[1] ), vreinterpretq_s32_f32( v1.val[1] ) ) );
 	return float32x4x2_t{ r0, r1 };
 }
 
 void BVH::BuildNEON()
 {
+#if 1
+	// NEON code needs an overhaul.
+	Build();
+#else
 	// aligned data
 	ALIGNED( 64 ) float32x4x2_t binbox[3 * AVXBINS];            // 768 bytes
 	ALIGNED( 64 ) float32x4x2_t binboxOrig[3 * AVXBINS];        // 768 bytes
@@ -6898,7 +6925,7 @@ void BVH::BuildNEON()
 	static const float32x4_t half4 = vdupq_n_f32( 0.5f );
 	static const float32x4_t two4 = vdupq_n_f32( 2.0f ), min1 = vdupq_n_f32( -1 );
 	static const int32x4_t maxbin4 = vdupq_n_s32( 7 );
-	static const float32x4_t mask3 = vceqq_s32( SIMD_SETRVEC( 0, 0, 0, 1 ), vdupq_n_f32( 0 ) );
+	static const float32x4_t mask3 = vreinterpretq_f32_u32( vceqq_s32( SIMD_SETRVECS( 0, 0, 0, 1 ), vdupq_n_s32( 0 ) ) );
 	static const float32x4_t binmul3 = vdupq_n_f32( AVXBINS * 0.49999f );
 	static const float32x4x2_t max8 = _mm256_set1_ps( -BVH_FAR ), mask6 = { mask3, mask3 };
 	static const float32x4_t signFlip4 = SIMD_SETRVEC( -0.0f, -0.0f, -0.0f, 0.0f );
@@ -6918,15 +6945,16 @@ void BVH::BuildNEON()
 			BVHNode& node = bvhNode[nodeIdx];
 			float32x4_t* node4 = (float32x4_t*)&bvhNode[nodeIdx];
 			// find optimal object split
-			const float32x4_t d4 = vbslq_f32( vshrq_n_s32( mask3, 31 ), vsubq_f32( node4[1], node4[0] ), min1 );
-			const float32x4_t nmin4 = vmulq_f32( vandq_s32( node4[0], mask3 ), two4 );
-			const float32x4_t rpd4 = vandq_s32( vdivq_f32( binmul3, d4 ), vmvnq_u32( vceqq_f32( d4, vdupq_n_f32( 0 ) ) ) );
+			const float32x4_t d4 = vbslq_f32( vshrq_n_u32( vreinterpretq_u32_f32( mask3 ), 31 ), vsubq_f32( node4[1], node4[0] ), min1 );
+			const float32x4_t nmin4 = vmulq_f32( vreinterpretq_f32_s32( vandq_s32( vreinterpretq_s32_f32( node4[0] ), vreinterpretq_s32_f32( mask3 ) ) ), two4 );
+			const float32x4_t rpd4 = vreinterpretq_f32_s32( vandq_s32( vreinterpretq_s32_f32( vdivq_f32( binmul3, d4 ) ), vmvnq_s32( vreinterpretq_s32_u32( vceqq_f32( d4, vdupq_n_f32( 0 ) ) ) ) ) );
 			// implementation of Section 4.1 of "Parallel Spatial Splits in Bounding Volume Hierarchies":
 			// main loop operates on two fragments to minimize dependencies and maximize ILP.
 			uint32_t fi = primIdx[node.leftFirst];
 			memset( count, 0, sizeof( count ) );
 			float32x4x2_t r0, r1, r2, f = _mm256_xor_ps( _mm256_and_ps( frag8[fi], mask6 ), signFlip8 );
-			const float32x4_t fmin = vandq_u32( frag4[fi].bmin4, mask3 ), fmax = vandq_u32( frag4[fi].bmax4, mask3 );
+			const float32x4_t fmin = vreinterpretq_f32_u32( vandq_u32( vreinterpretq_u32_f32( frag4[fi].bmin4 ), vreinterpretq_u32_f32( mask3 ) ) );
+			const float32x4_t fmax = vreinterpretq_f32_u32( vandq_u32( vreinterpretq_u32_f32( frag4[fi].bmax4 ), vreinterpretq_u32_f32( mask3 ) ) );
 			const int32x4_t bi4 = vcvtq_s32_f32( vrndnq_f32( vsubq_f32( vmulq_f32( vsubq_f32( vaddq_f32( frag4[fi].bmax4, frag4[fi].bmin4 ), nmin4 ), rpd4 ), half4 ) ) );
 			const int32x4_t b4c = vmaxq_s32( vminq_s32( bi4, maxbin4 ), vdupq_n_s32( 0 ) ); // clamp needed after all
 			memcpy( binbox, binboxOrig, sizeof( binbox ) );
@@ -6938,7 +6966,8 @@ void BVH::BuildNEON()
 				//                if (fid > triCount) fid = triCount - 1; // never happens but g++ *and* vs2017 need this to not crash...
 				//            #endif
 				const float32x4x2_t b0 = binbox[i0], b1 = binbox[AVXBINS + i1], b2 = binbox[2 * AVXBINS + i2];
-				const float32x4_t frmin = vandq_u32( frag4[fid].bmin4, mask3 ), frmax = vandq_u32( frag4[fid].bmax4, mask3 );
+				const float32x4_t frmin = vreinterpretq_f32_u32( vandq_u32( vreinterpretq_u32_f32( frag4[fid].bmin4 ), vreinterpretq_u32_f32( mask3 ) ) );
+				const float32x4_t frmax = vreinterpretq_f32_u32( vandq_u32( vreinterpretq_u32_f32( frag4[fid].bmax4 ), vreinterpretq_u32_f32( mask3 ) ) );
 				r0 = _mm256_max_ps( b0, f ), r1 = _mm256_max_ps( b1, f ), r2 = _mm256_max_ps( b2, f );
 				const int32x4_t b4 = vcvtq_s32_f32( vrndnq_f32( (vsubq_f32( vmulq_f32( vsubq_f32( vaddq_f32( frmax, frmin ), nmin4 ), rpd4 ), half4 )) ) );
 				const int32x4_t bc4 = vmaxq_s32( vminq_s32( b4, maxbin4 ), vdupq_n_s32( 0 ) ); // clamp needed after all
@@ -7008,6 +7037,7 @@ void BVH::BuildNEON()
 	refittable = true; // not using spatial splits: can refit this BVH
 	may_have_holes = false; // the AVX builder produces a continuous list of nodes
 	usedNodes = newNodePtr;
+#endif
 }
 
 // Traverse the second alternative BVH layout (ALT_SOA).
