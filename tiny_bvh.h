@@ -961,6 +961,9 @@ private:
 	// Atomic counters for threaded builds
 	std::atomic<uint32_t>* atomicNewNodePtr = 0;
 	std::atomic<uint32_t>* atomicNextFrag = 0;
+
+	std::size_t total;
+	std::atomic<std::size_t>* done;
 };
 
 #ifdef DOUBLE_PRECISION_SUPPORT
@@ -5896,6 +5899,12 @@ void BuildAVX_( uint32_t nodeIdx, uint32_t depth, BVH* bvh )
 }
 void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth )
 {
+	std::atomic<std::size_t> _done = 0;
+	if (nodeIdx==0) {
+		const BVHNode& root = bvhNode[0];
+		this->total = root.triCount; this->done = &_done;
+	}
+
 	// aligned data
 	ALIGNED( 64 ) __m256 binbox[3 * AVXBINS];			// 768 bytes
 	ALIGNED( 64 ) __m256 binboxOrig[3 * AVXBINS];		// 768 bytes
@@ -5920,7 +5929,6 @@ void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth )
 	// subdivide recursively
 	ALIGNED( 64 ) uint32_t task[128], taskCount = 0;
 	BVHNode& root = bvhNode[0];
-	const auto recp_total = 1/float(root.triCount); auto done = 0ul;
 	const bvhvec3 minDim = (root.aabbMax - root.aabbMin) * 1e-7f;
 	while (1)
 	{
@@ -5994,7 +6002,7 @@ void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth )
 			splitCost = c_trav + c_int * rSAV * splitCost;
 			float noSplitCost = (float)node.triCount * c_int;
 			if (splitCost >= noSplitCost) {
-				progress_tracker((done+=node.triCount)*recp_total);
+				progress_tracker(((*done)+=node.triCount)/float(total));
 				break; // not splitting is better.
 			}
 			// in-place partition
