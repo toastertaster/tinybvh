@@ -276,6 +276,8 @@ ts_vec4::ts_vec4( const ts_vec3& a, const float b ) { x = a.x, y = a.y, z = a.z,
 
 #endif // TINYSCENE_USE_CUSTOM_VECTOR_TYPES
 
+#include <vector>
+
 struct ts_uchar4
 {
 	ts_uchar4() = default;
@@ -311,7 +313,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  FatTri                                                                     |
-//  |  Full triangle data (for shading only), carefully layed out.          LH2'24|
+//  |  Full triangle data (for shading only), carefully layed out.          LH2'25|
 //  +-----------------------------------------------------------------------------+
 class FatTri
 {
@@ -346,7 +348,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  SkyDome                                                                    |
-//  |  Stores data for a HDR sky dome.                                      LH2'24|
+//  |  Stores data for a HDR sky dome.                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 class SkyDome
 {
@@ -363,7 +365,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  Skin                                                                       |
-//  |  Skin data storage.                                                   LH2'24|
+//  |  Skin data storage.                                                   LH2'25|
 //  +-----------------------------------------------------------------------------+
 class Skin
 {
@@ -378,7 +380,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  Mesh                                                                       |
-//  |  Mesh data storage.                                                   LH2'24|
+//  |  Mesh data storage.                                                   LH2'25|
 //  +-----------------------------------------------------------------------------+
 class Mesh
 {
@@ -388,7 +390,7 @@ public:
 	{
 		// BVH can be one of four types:
 		// tinybvh::BVH for refittable / rebuildable meshes
-		// tinybvh::BVH8_CPU for static / rigid geometry
+		// tinybvh::BVH8_CPU for static / rigid geometry (other types when AVX2 is not available)
 		// tinybvh::BVH_GPU for refittable / rebuildable meshes - targetted at GPU rendering
 		// tinybvh::BVH8_CWBVH for static / rigid geometry - targetted at GPU rendering.
 		// Default is dynamic / CPU; rigid is restrictive but much faster to trace.
@@ -396,7 +398,13 @@ public:
 		union
 		{
 			tinybvh::BVH* dynamicBVH = 0;
+		#if defined BVH_USEAVX2
 			tinybvh::BVH8_CPU* rigidBVH;
+		#elif defined BVH_USESSE
+			tinybvh::BVH4_CPU* rigidBVH;
+		#else
+			tinybvh::BVH_SoA* rigidBVH;
+		#endif
 			tinybvh::BVH_GPU* dynamicGPU;
 			tinybvh::BVH8_CWBVH* rigidGPU;
 		};
@@ -416,30 +424,30 @@ public:
 		const ::std::vector<ts_vec4>& tmpTs, const ::std::vector<Pose>& tmpPoses,
 		const ::std::vector<ts_uint4>& tmpJoints, const ::std::vector<ts_vec4>& tmpWeights, const int materialIdx );
 	void BuildMaterialList();
+	void CreateOpacityMicroMaps();
 	void SetPose( const ::std::vector<float>& weights );
 	void SetPose( const Skin* skin );
 	// data members
 	::std::string name = "unnamed";		// name for the mesh
 	int ID = -1;						// unique ID for the mesh: position in mesh array
 	::std::vector<ts_vec4> vertices;	// model vertices, always 3 per triangle: vertices are *not* indexed.
+	::std::vector<FatTri> triangles;	// full triangles, to be used for shading
+	uint32_t* omaps = 0;				// at N=32: 1024 bit / 128 byte per triangle
 	::std::vector<ts_vec3> vertexNormals;	// vertex normals, 1 per vertex
+	::std::vector<int> materialList;	// list of materials used by the mesh; used to efficiently track light changes
 	::std::vector<ts_vec4> original;	// skinning: base pose; will be transformed into vector vertices
 	::std::vector<ts_vec3> origNormal;	// skinning: base pose normals
-	::std::vector<FatTri> triangles;	// full triangles, to be used for shading
-	::std::vector<int> materialList;	// list of materials used by the mesh; used to efficiently track light changes
 	::std::vector<ts_uint4> joints;		// skinning: joints
 	::std::vector<ts_vec4> weights;		// skinning: joint weights
 	::std::vector<Pose> poses;			// morph target data
-	bool isAnimated;					// true when this mesh has animation data
-	bool excludeFromNavmesh = false;	// prevents mesh from influencing navmesh generation (e.g. curtains)
 	bool geomChanged = true;			// triangle data was modified; blas update is needed
-	ts_aabb worldBounds;				// mesh bounds transformed by the transform of the parent node, for TLAS builds
+	bool hasOpacityMicroMaps = false;	// if true, 5 vec4's per triangle are passed to tinybvh.
 	AccStruc blas;						// bottom-level acceleration structure
 };
 
 //  +-----------------------------------------------------------------------------+
 //  |  Node                                                                       |
-//  |  Simple node for construction of a scene graph for the scene.         LH2'24|
+//  |  Simple node for construction of a scene graph for the scene.         LH2'25|
 //  +-----------------------------------------------------------------------------+
 class Node
 {
@@ -480,7 +488,7 @@ protected:
 //  |  Material                                                                   |
 //  |  Full material definition, which contains everything that can be read from  |
 //  |  a gltf file. Will need to be digested to something more practical for      |
-//  |  rendering: For that there is 'Material'.                             LH2'24|
+//  |  rendering: For that there is 'Material'.                             LH2'25|
 //  +-----------------------------------------------------------------------------+
 class Material
 {
@@ -559,7 +567,7 @@ private:
 //  +-----------------------------------------------------------------------------+
 //  |  Material                                                                   |
 //  |  Material definition. This is the version for actual rendering; it stores   |
-//  |  a subset of the full data of a Material.                             LH2'24|
+//  |  a subset of the full data of a Material.                             LH2'25|
 //  +-----------------------------------------------------------------------------+
 class RenderMaterial
 {
@@ -590,7 +598,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation                                                                  |
-//  |  Animation definition.                                                LH2'24|
+//  |  Animation definition.                                                LH2'25|
 //  +-----------------------------------------------------------------------------+
 class Animation
 {
@@ -643,7 +651,7 @@ public:
 //  |  - A file name does not uniquely identify a texture: the file may be        |
 //  |    different between folders, and the texture may have been loaded with     |
 //  |    'modFlags'. Instead, a texture is uniquely identified by its full file   |
-//  |    name, including path, as well as the mods field.                   LH2'24|
+//  |    name, including path, as well as the mods field.                   LH2'25|
 //  +-----------------------------------------------------------------------------+
 class Texture
 {
@@ -684,7 +692,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  TriLight                                                                   |
-//  |  Light triangle.                                                      LH2'24|
+//  |  Light triangle.                                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 class TriLight
 {
@@ -707,7 +715,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  PointLight                                                                 |
-//  |  Point light definition.                                              LH2'24|
+//  |  Point light definition.                                              LH2'25|
 //  +-----------------------------------------------------------------------------+
 class PointLight
 {
@@ -740,7 +748,7 @@ public:
 
 //  +-----------------------------------------------------------------------------+
 //  |  DirectionalLight                                                           |
-//  |  Directional light definition.                                        LH2'24|
+//  |  Directional light definition.                                        LH2'25|
 //  +-----------------------------------------------------------------------------+
 class DirectionalLight
 {
@@ -756,7 +764,7 @@ public:
 //  +-----------------------------------------------------------------------------+
 //  |  Scene                                                                      |
 //  |  Module for scene I/O and host-side management.                             |
-//  |  This is a pure static class; we will not have more than one scene.   LH2'24|
+//  |  This is a pure static class; we will not have more than one scene.   LH2'25|
 //  +-----------------------------------------------------------------------------+
 class Scene
 {
@@ -776,6 +784,9 @@ public:
 	static int FindMaterialIDByOrigin( const char* name );
 	static int FindNextMaterialID( const char* name, const int matID );
 	static int FindNode( const char* name );
+	static void CollapseMeshes( const int nodeId );
+	static void CreateOpacityMicroMaps( const int nodeId );
+	static void SetBVHType( const int nodeId, const int t );
 	static void SetNodeTransform( const int nodeId, const ts_mat4& transform );
 	static const ts_mat4& GetNodeTransform( const int nodeId );
 	static void ResetAnimation( const int animId );
@@ -838,11 +849,11 @@ public:
 #define SCENE_FATAL_ERROR(s) { SCENE_FATAL_ERROR_IF(1,(s)) }
 #ifdef _WINDOWS_ // windows.h has been included
 #define SCENE_FATAL_ERROR_IF(c,s) { if (c) { char t[512]; sprintf( t, \
-	"Fatal error in tiny_bvh.h, line %i:\n%s\n", __LINE__, s ); \
+	"Fatal error in tiny_scene.h, line %i:\n%s\n", __LINE__, s ); \
 	MessageBox( NULL, t, "Fatal error", MB_OK ); exit( 1 ); } }
 #else
 #define SCENE_FATAL_ERROR_IF(c,s) if (c) { fprintf( stderr, \
-	"Fatal error in tiny_bvh.h, line %i:\n%s\n", __LINE__, s ); exit( 1 ); }
+	"Fatal error in tiny_scene.h, line %i:\n%s\n", __LINE__, s ); exit( 1 ); }
 #endif
 
 namespace tinyscene {
@@ -990,6 +1001,7 @@ void RenderMaterial::SetTransmittance( ts_vec3 t )
 #elif
 #include <unistd.h>
 #endif
+#include <thread>
 
 // 'declaration of x hides previous local declaration'
 #pragma warning( disable: 4456)
@@ -999,7 +1011,7 @@ using namespace ::std;
 
 //  +-----------------------------------------------------------------------------+
 //  |  SkyDome::Load                                                              |
-//  |  Load a skydome.                                                      LH2'24|
+//  |  Load a skydome.                                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 void SkyDome::Load( const char* filename, const ts_vec3 scale )
 {
@@ -1047,7 +1059,7 @@ void SkyDome::Load( const char* filename, const ts_vec3 scale )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Skin::Skin                                                                 |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 Skin::Skin( const ::tinygltf::Skin& gltfSkin, const ::tinygltf::Model& gltfModel, const int nodeBase )
 {
@@ -1056,7 +1068,7 @@ Skin::Skin( const ::tinygltf::Skin& gltfSkin, const ::tinygltf::Model& gltfModel
 
 //  +-----------------------------------------------------------------------------+
 //  |  Skin::Skin                                                                 |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Skin::ConvertFromGLTFSkin( const ::tinygltf::Skin& gltfSkin, const ::tinygltf::Model& gltfModel, const int nodeBase )
 {
@@ -1082,7 +1094,7 @@ void Skin::ConvertFromGLTFSkin( const ::tinygltf::Skin& gltfSkin, const ::tinygl
 
 //  +-----------------------------------------------------------------------------+
 //  |  Mesh::Mesh                                                                 |
-//  |  Constructors.                                                        LH2'24|
+//  |  Constructors.                                                        LH2'25|
 //  +-----------------------------------------------------------------------------+
 Mesh::Mesh( const int triCount )
 {
@@ -1105,7 +1117,7 @@ Mesh::Mesh( const ::tinygltf::Mesh& gltfMesh, const ::tinygltf::Model& gltfModel
 
 //  +-----------------------------------------------------------------------------+
 //  |  Mesh::LoadGeometry                                                         |
-//  |  Load geometry data from disk. Obj files only.                        LH2'24|
+//  |  Load geometry data from disk. Obj files only.                        LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Mesh::LoadGeometry( const char* file, const char* dir, const float scale, const bool flatShaded )
 {
@@ -1121,7 +1133,7 @@ void Mesh::LoadGeometry( const char* file, const char* dir, const float scale, c
 
 //  +-----------------------------------------------------------------------------+
 //  |  Mesh::LoadGeometryFromObj                                                  |
-//  |  Load an obj file using tinyobj.                                      LH2'24|
+//  |  Load an obj file using tinyobj.                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Mesh::LoadGeometryFromOBJ( const string& fileName, const char* directory, const ts_mat4& T, const bool flatShaded )
 {
@@ -1287,7 +1299,7 @@ void Mesh::LoadGeometryFromOBJ( const string& fileName, const char* directory, c
 
 //  +-----------------------------------------------------------------------------+
 //  |  Mesh::ConvertFromGTLFMesh                                                  |
-//  |  Convert a gltf mesh to a Mesh.                                       LH2'24|
+//  |  Convert a gltf mesh to a Mesh.                                       LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Mesh::ConvertFromGTLFMesh( const ::tinygltf::Mesh& gltfMesh, const ::tinygltf::Model& gltfModel, const vector<int>& matIdx, const int materialOverride )
 {
@@ -1468,7 +1480,7 @@ void Mesh::ConvertFromGTLFMesh( const ::tinygltf::Mesh& gltfMesh, const ::tinygl
 //  |  Mesh::BuildFromIndexedData                                                 |
 //  |  We use non-indexed triangles, so three subsequent vertices form a tri,     |
 //  |  to skip one indirection during intersection. glTF and obj store indexed    |
-//  |  data, which we now convert to the final representation.              LH2'24|
+//  |  data, which we now convert to the final representation.              LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Mesh::BuildFromIndexedData( const vector<int>& tmpIndices, const vector<ts_vec3>& tmpVertices,
 	const vector<ts_vec3>& tmpNormals, const vector<ts_vec2>& tmpUvs, const vector<ts_vec2>& tmpUv2s,
@@ -1636,7 +1648,7 @@ void Mesh::BuildFromIndexedData( const vector<int>& tmpIndices, const vector<ts_
 //  |  Mesh::BuildMaterialList                                                    |
 //  |  Update the list of materials used by this mesh. We will use this list to   |
 //  |  efficiently find meshes using a specific material, which in turn is useful |
-//  |  when a material becomes emissive or non-emissive.                    LH2'24|
+//  |  when a material becomes emissive or non-emissive.                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Mesh::BuildMaterialList()
 {
@@ -1656,9 +1668,73 @@ void Mesh::BuildMaterialList()
 }
 
 //  +-----------------------------------------------------------------------------+
+//  |  Mesh::CreateOpacityMicroMaps                                               |
+//  |  Fill the opacity micro maps vector.                                  LH2'25|
+//  +-----------------------------------------------------------------------------+
+void CreateOpacityMicroMap( Mesh* mesh, const int N, const int first, const int last )
+{
+	const float fN = (float)N;
+	const float rN = 1.0f / fN;
+	for (int i = first; i < last; i++)
+	{
+		uint32_t* map = mesh->omaps + i * ((N * N) / 32);
+		FatTri& tri = mesh->triangles[i];
+		const uint32_t matIdx = tri.material;
+		const Material* material = Scene::materials[matIdx];
+		Texture* tex = 0;
+		if (material->color.textureID > 1)
+		{
+			tex = Scene::textures[material->color.textureID];
+			if (!tex->idata) tex = 0; // can't use hdr textures for now.
+		}
+		if (!tex) { memset( map, 255, N * N / 8 ); continue; }
+		memset( map, 0, N * N / 8 );
+		const float u0 = tri.u0, u1 = tri.u1, u2 = tri.u2, w = (float)tex->width;
+		const float v0 = tri.v0, v1 = tri.v1, v2 = tri.v2, h = (float)tex->height;
+		const int iw = tex->width;
+		for (int y = 0; y < N * 4; y++)
+		{
+			float v = ((float)y + 0.5f) * 0.25f * rN, u = 0.125f / fN;
+			for (int x = 0; x < N * 4; x++, u += 0.25f / fN)
+			{
+				if (u + v >= 1) break;
+				// formula from the paper: Sub-triangle opacity masks for faster ray
+				// tracing of transparent objects, Gruen et al., 2020
+				const int row = int( (u + v) * fN ), diag = int( (1 - u) * fN );
+				const int idx = (row * row) + int( v * fN ) + (diag - (N - 1 - row));
+				const float tu = u * u1 + v * u2 + (1 - u - v) * u0;
+				const float tv = u * v1 + v * v2 + (1 - u - v) * v0;
+				const int iu = (int)((tu - floorf( tu )) * w);
+				const int iv = (int)((tv - floorf( tv )) * h);
+				const uint32_t pixel = ((uint32_t*)tex->idata)[iu + iv * iw];
+				if ((pixel >> 24) > 2) map[idx >> 5] |= 1 << (idx & 31);
+			}
+		}
+	}
+}
+void Mesh::CreateOpacityMicroMaps()
+{
+	// fill the opacity maps: WIP, we simply take one texture sample.
+	const int N = 32; // i.e.: 32 * 32 = 1024bits = 128 bytes = 32 uints per tri.
+	free64( omaps );
+	omaps = (uint32_t*)malloc64( triangles.size() * N * N / 8 );
+	constexpr int slices = 32;
+	const int slice = (int)triangles.size() / slices;
+	vector<thread> jobs;
+	for (int i = 0; i < slices; i++)
+	{
+		const int first = i * slice;
+		const int last = (i == (slices - 1)) ? (int)triangles.size() : (first + slice);
+		jobs.emplace_back( std::thread( &CreateOpacityMicroMap, this, N, first, last ) );
+	}
+	for (int i = 0; i < slices; i++) jobs[i].join();
+	hasOpacityMicroMaps = true;
+}
+
+//  +-----------------------------------------------------------------------------+
 //  |  Mesh::SetPose                                                              |
 //  |  Update the geometry data in this mesh using the weights from the node,     |
-//  |  and update all dependent data.                                       LH2'24|
+//  |  and update all dependent data.                                       LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Mesh::SetPose( const vector<float>& w )
 {
@@ -1692,7 +1768,7 @@ void Mesh::SetPose( const vector<float>& w )
 //  +-----------------------------------------------------------------------------+
 //  |  Mesh::SetPose                                                              |
 //  |  Update the geometry data in this mesh using a skin.                        |
-//  |  Called from RenderSystem::UpdateSceneGraph, for skinned mesh nodes.  LH2'24|
+//  |  Called from RenderSystem::UpdateSceneGraph, for skinned mesh nodes.  LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Mesh::SetPose( const Skin* skin )
 {
@@ -1752,7 +1828,7 @@ static FatTri TransformedFatTri( FatTri* tri, ts_mat4 T )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Node::Node                                                                 |
-//  |  Constructors.                                                        LH2'24|
+//  |  Constructors.                                                        LH2'25|
 //  +-----------------------------------------------------------------------------+
 Node::Node( const tinygltf::Node& gltfNode, const int nodeBase, const int meshBase, const int skinBase )
 {
@@ -1770,7 +1846,7 @@ Node::Node( const int meshIdx, const ts_mat4& transform )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Node::~Node                                                                |
-//  |  Destructor.                                                          LH2'24|
+//  |  Destructor.                                                          LH2'25|
 //  +-----------------------------------------------------------------------------+
 Node::~Node()
 {
@@ -1795,7 +1871,7 @@ Node::~Node()
 
 //  +-----------------------------------------------------------------------------+
 //  |  Node::ConvertFromGLTFNode                                                  |
-//  |  Create a node from a GLTF node.                                      LH2'24|
+//  |  Create a node from a GLTF node.                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Node::ConvertFromGLTFNode( const tinygltf::Node& gltfNode, const int nodeBase, const int meshBase, const int skinBase )
 {
@@ -1846,7 +1922,7 @@ void Node::ConvertFromGLTFNode( const tinygltf::Node& gltfNode, const int nodeBa
 
 //  +-----------------------------------------------------------------------------+
 //  |  Node::UpdateTransformFromTRS                                               |
-//  |  Process T, R, S data to localTransform.                              LH2'24|
+//  |  Process T, R, S data to localTransform.                              LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Node::UpdateTransformFromTRS()
 {
@@ -1866,7 +1942,7 @@ void Node::UpdateTransformFromTRS()
 //  |  Node::Update                                                               |
 //  |  Calculates the combined transform for this node and recurses into the      |
 //  |  child nodes. If a change is detected, the light triangles are updated      |
-//  |  as well.                                                             LH2'24|
+//  |  as well.                                                             LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Node::Update( const ts_mat4& T )
 {
@@ -1908,19 +1984,41 @@ void Node::Update( const ts_mat4& T )
 			switch (mesh->blas.bvhType)
 			{
 			case BVH_DYNAMIC:
-				if (mesh->blas.dynamicBVH == 0) mesh->blas.dynamicBVH = new tinybvh::BVH();
+				if (mesh->blas.dynamicBVH == 0)
+				{
+					mesh->blas.dynamicBVH = new tinybvh::BVH();
+					if (mesh->omaps) mesh->blas.dynamicBVH->SetOpacityMicroMaps( mesh->omaps, 32 );
+				}
 				mesh->blas.dynamicBVH->Build( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
 				break;
 			case BVH_RIGID:
-				if (mesh->blas.rigidBVH == 0) mesh->blas.rigidBVH = new tinybvh::BVH8_CPU();
+				if (mesh->blas.rigidBVH == 0)
+				{
+				#if defined BVH_USEAVX2
+					mesh->blas.rigidBVH = new tinybvh::BVH8_CPU();
+				#elif defined BVH_USESSE
+					mesh->blas.rigidBVH = new tinybvh::BVH4_CPU();
+				#else
+					mesh->blas.rigidBVH = new tinybvh::BVH_SoA();
+				#endif
+					if (mesh->omaps) mesh->blas.rigidBVH->SetOpacityMicroMaps( mesh->omaps, 32 );
+				}
 				mesh->blas.rigidBVH->BuildHQ( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
 				break;
 			case GPU_DYNAMIC:
-				if (mesh->blas.dynamicGPU == 0) mesh->blas.dynamicGPU = new tinybvh::BVH_GPU();
+				if (mesh->blas.dynamicGPU == 0)
+				{
+					mesh->blas.dynamicGPU = new tinybvh::BVH_GPU();
+					if (mesh->omaps) mesh->blas.dynamicGPU->SetOpacityMicroMaps( mesh->omaps, 32 );
+				}
 				mesh->blas.dynamicGPU->Build( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
 				break;
 			case GPU_RIGID:
-				if (mesh->blas.rigidGPU == 0) mesh->blas.rigidGPU = new tinybvh::BVH8_CWBVH();
+				if (mesh->blas.rigidGPU == 0)
+				{
+					mesh->blas.rigidGPU = new tinybvh::BVH8_CWBVH();
+					if (mesh->omaps) mesh->blas.rigidGPU->SetOpacityMicroMaps( mesh->omaps, 32 );
+				}
 				mesh->blas.rigidGPU->BuildHQ( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
 				break;
 			default:
@@ -1950,7 +2048,7 @@ void Node::Update( const ts_mat4& T )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Node::PrepareLights                                                        |
-//  |  Detects emissive triangles and creates light triangles for them.     LH2'24|
+//  |  Detects emissive triangles and creates light triangles for them.     LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Node::PrepareLights()
 {
@@ -1989,7 +2087,7 @@ void Node::PrepareLights()
 //  +-----------------------------------------------------------------------------+
 //  |  Node::UpdateLights                                                         |
 //  |  Update light triangles belonging to this instance after the tansform for   |
-//  |  the node changed.                                                    LH2'24|
+//  |  the node changed.                                                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Node::UpdateLights()
 {
@@ -2010,7 +2108,7 @@ void Node::UpdateLights()
 
 //  +-----------------------------------------------------------------------------+
 //  |  Material::ConvertFrom                                                      |
-//  |  Converts a tinyobjloader material to an LH2 Material.                LH2'24|
+//  |  Converts a tinyobjloader material to an LH2 Material.                LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Material::ConvertFrom( const ::tinyobj::material_t& original )
 {
@@ -2052,7 +2150,7 @@ void Material::ConvertFrom( const ::tinyobj::material_t& original )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Material::ConvertFrom                                                      |
-//  |  Converts a tinygltf material to an LH2 Material.                     LH2'24|
+//  |  Converts a tinygltf material to an LH2 Material.                     LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Material::ConvertFrom( const tinygltf::Material& original, const vector<int>& texIdx )
 {
@@ -2132,7 +2230,7 @@ void Material::ConvertFrom( const tinygltf::Material& original, const vector<int
 
 //  +-----------------------------------------------------------------------------+
 //  |  RenderMaterial::RenderMaterial                                             |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 RenderMaterial::RenderMaterial( const Material* source, const vector<int>& offsets )
 {
@@ -2167,7 +2265,7 @@ RenderMaterial::RenderMaterial( const Material* source, const vector<int>& offse
 //  |  RenderMaterial::MakeMap                                                    |
 //  |  Helper function: Converts a spatially varying (i.e., texture-mapped)       |
 //  |  ts_vec3 material property into a 'Map', which is a compact representation  |
-//  |  for rendering.                                                       LH2'24|
+//  |  for rendering.                                                       LH2'25|
 //  +-----------------------------------------------------------------------------+
 RenderMaterial::Map RenderMaterial::MakeMap( Material::vec3Value source, const vector<int>& offsets )
 {
@@ -2185,7 +2283,7 @@ RenderMaterial::Map RenderMaterial::MakeMap( Material::vec3Value source, const v
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Sampler::Sampler                                                |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 Animation::Sampler::Sampler( const tinygltf::AnimationSampler& gltfSampler, const tinygltf::Model& gltfModel )
 {
@@ -2194,7 +2292,7 @@ Animation::Sampler::Sampler( const tinygltf::AnimationSampler& gltfSampler, cons
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Sampler::ConvertFromGLTFSampler                                 |
-//  |  Convert a gltf animation sampler.                                    LH2'24|
+//  |  Convert a gltf animation sampler.                                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Animation::Sampler::ConvertFromGLTFSampler( const tinygltf::AnimationSampler& gltfSampler, const tinygltf::Model& gltfModel )
 {
@@ -2262,7 +2360,7 @@ void Animation::Sampler::ConvertFromGLTFSampler( const tinygltf::AnimationSample
 
 //  +-----------------------------------------------------------------------------+
 //  |  Sampler::SampleFloat, SampleVec3, SampleVec4                               |
-//  |  Get a value from the sampler.                                        LH2'24|
+//  |  Get a value from the sampler.                                        LH2'25|
 //  +-----------------------------------------------------------------------------+
 float Animation::Sampler::SampleFloat( float currentTime, int k, int i, int count ) const
 {
@@ -2349,7 +2447,7 @@ ts_quat Animation::Sampler::SampleQuat( float currentTime, int k ) const
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Channel::Channel                                                |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 Animation::Channel::Channel( const tinygltf::AnimationChannel& gltfChannel, const int nodeBase )
 {
@@ -2358,7 +2456,7 @@ Animation::Channel::Channel( const tinygltf::AnimationChannel& gltfChannel, cons
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Channel::ConvertFromGLTFChannel                                 |
-//  |  Convert a gltf animation channel.                                    LH2'24|
+//  |  Convert a gltf animation channel.                                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Animation::Channel::ConvertFromGLTFChannel( const tinygltf::AnimationChannel& gltfChannel, const int nodeBase )
 {
@@ -2372,7 +2470,7 @@ void Animation::Channel::ConvertFromGLTFChannel( const tinygltf::AnimationChanne
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Channel::Update                                                 |
-//  |  Advance channel animation time.                                      LH2'24|
+//  |  Advance channel animation time.                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Animation::Channel::Update( const float dt, const Sampler* sampler )
 {
@@ -2437,7 +2535,7 @@ void Animation::Channel::Update( const float dt, const Sampler* sampler )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Animation                                                       |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 Animation::Animation( tinygltf::Animation& gltfAnim, tinygltf::Model& gltfModel, const int nodeBase )
 {
@@ -2446,7 +2544,7 @@ Animation::Animation( tinygltf::Animation& gltfAnim, tinygltf::Model& gltfModel,
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::ConvertFromGLTFAnim                                             |
-//  |  Convert a gltf animation.                                            LH2'24|
+//  |  Convert a gltf animation.                                            LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Animation::ConvertFromGLTFAnim( tinygltf::Animation& gltfAnim, tinygltf::Model& gltfModel, const int nodeBase )
 {
@@ -2456,7 +2554,7 @@ void Animation::ConvertFromGLTFAnim( tinygltf::Animation& gltfAnim, tinygltf::Mo
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::SetTime                                                         |
-//  |  Set the animation timers of all channels to a specific value.        LH2'24|
+//  |  Set the animation timers of all channels to a specific value.        LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Animation::SetTime( const float t )
 {
@@ -2465,7 +2563,7 @@ void Animation::SetTime( const float t )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Reset                                                           |
-//  |  Reset the animation timers of all channels.                          LH2'24|
+//  |  Reset the animation timers of all channels.                          LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Animation::Reset()
 {
@@ -2474,7 +2572,7 @@ void Animation::Reset()
 
 //  +-----------------------------------------------------------------------------+
 //  |  Animation::Update                                                          |
-//  |  Advance channel animation timers.                                    LH2'24|
+//  |  Advance channel animation timers.                                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Animation::Update( const float dt )
 {
@@ -2483,7 +2581,7 @@ void Animation::Update( const float dt )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Texture::Texture                                                           |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 Texture::Texture( const char* fileName, const uint32_t modFlags )
 {
@@ -2493,7 +2591,7 @@ Texture::Texture( const char* fileName, const uint32_t modFlags )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Texture::sRGBtoLinear                                                      |
-//  |  Convert sRGB data to linear color space.                             LH2'24|
+//  |  Convert sRGB data to linear color space.                             LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Texture::sRGBtoLinear( uint8_t* pixels, const uint32_t size, const uint32_t stride )
 {
@@ -2508,7 +2606,7 @@ void Texture::sRGBtoLinear( uint8_t* pixels, const uint32_t size, const uint32_t
 //  +-----------------------------------------------------------------------------+
 //  |  Texture::Equals                                                            |
 //  |  Returns true if the fields that identify the texture are identical to the  |
-//  |  supplied values. Used for texture reuse by the Scene object.         LH2'24|
+//  |  supplied values. Used for texture reuse by the Scene object.         LH2'25|
 //  +-----------------------------------------------------------------------------+
 bool Texture::Equals( const std::string& o, const uint32_t m )
 {
@@ -2520,7 +2618,7 @@ bool Texture::Equals( const std::string& o, const uint32_t m )
 //  +-----------------------------------------------------------------------------+
 //  |  Texture::PixelsNeeded                                                      |
 //  |  Helper function that determines the number of pixels that should be        |
-//  |  allocated for the given width, height and MIP level count.           LH2'24|
+//  |  allocated for the given width, height and MIP level count.           LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Texture::PixelsNeeded( int w, int h, const int l /* >= 1; includes base layer */ ) const
 {
@@ -2531,7 +2629,7 @@ int Texture::PixelsNeeded( int w, int h, const int l /* >= 1; includes base laye
 
 //  +-----------------------------------------------------------------------------+
 //  |  Texture::ConstructMIPmaps                                                  |
-//  |  Generate MIP levels for a loaded texture.                            LH2'24|
+//  |  Generate MIP levels for a loaded texture.                            LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Texture::ConstructMIPmaps()
 {
@@ -2560,7 +2658,7 @@ void Texture::ConstructMIPmaps()
 
 //  +-----------------------------------------------------------------------------+
 //  |  Texture::Load                                                              |
-//  |  Load texture data from disk.                                         LH2'24|
+//  |  Load texture data from disk.                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Texture::Load( const char* fileName, const uint32_t modFlags, bool normalMap )
 {
@@ -2667,13 +2765,13 @@ void Texture::Load( const char* fileName, const uint32_t modFlags, bool normalMa
 
 //  +-----------------------------------------------------------------------------+
 //  |  Texture::BumpToNormalMap                                                   |
-//  |  Convert a bumpmap to a normalmap.                                    LH2'24|
+//  |  Convert a bumpmap to a normalmap.                                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Texture::BumpToNormalMap( float heightScale )
 {
 	uint8_t* normalMap = new uint8_t[width * height * 4];
 	const float stepZ = 1.0f / 255.0f;
-	for (uint32_t i = 0; i < width * height; i++)
+	for (uint32_t i = 0; i < width* height; i++)
 	{
 		uint32_t xCoord = i % width, yCoord = i / width;
 		float xPrev = xCoord > 0 ? idata[i - 1].x * stepZ : idata[i].x * stepZ;
@@ -2696,7 +2794,7 @@ void Texture::BumpToNormalMap( float heightScale )
 
 //  +-----------------------------------------------------------------------------+
 //  |  TriLight::TriLight                                                         |
-//  |  Constructor.                                                         LH2'24|
+//  |  Constructor.                                                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 TriLight::TriLight( FatTri* origTri, int origIdx, int origInstance )
 {
@@ -2718,7 +2816,7 @@ TriLight::TriLight( FatTri* origTri, int origIdx, int origInstance )
 }
 
 //  +-----------------------------------------------------------------------------+
-//  |  Scene::~Scene                                                        LH2'24|
+//  |  Scene::~Scene                                                        LH2'25|
 //  +-----------------------------------------------------------------------------+
 Scene::~Scene()
 {
@@ -2731,7 +2829,7 @@ Scene::~Scene()
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddMesh                                                             |
-//  |  Add an existing Mesh to the list of meshes and return the mesh ID.   LH2'24|
+//  |  Add an existing Mesh to the list of meshes and return the mesh ID.   LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddMesh( Mesh* mesh )
 {
@@ -2750,7 +2848,7 @@ int Scene::AddMesh( Mesh* mesh )
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddMesh                                                             |
 //  |  Create a mesh specified by a file name and data dir, apply a scale, add    |
-//  |  the mesh to the list of meshes and return the mesh ID.               LH2'24|
+//  |  the mesh to the list of meshes and return the mesh ID.               LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddMesh( const char* objFile, const float scale, const bool flatShaded )
 {
@@ -2771,7 +2869,7 @@ int Scene::AddMesh( const char* objFile, const char* dir, const float scale, con
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddMesh                                                             |
 //  |  Create a mesh with the specified amount of triangles without actually      |
-//  |  setting the triangles. Set these via the AddTriToMesh function.      LH2'24|
+//  |  setting the triangles. Set these via the AddTriToMesh function.      LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddMesh( const int triCount )
 {
@@ -2781,7 +2879,7 @@ int Scene::AddMesh( const int triCount )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddTriToMesh                                                        |
-//  |  Add a single triangle to a mesh.                                     LH2'24|
+//  |  Add a single triangle to a mesh.                                     LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Scene::AddTriToMesh( const int meshId, const ts_vec3& v0, const ts_vec3& v1, const ts_vec3& v2, const int matId )
 {
@@ -2803,7 +2901,7 @@ void Scene::AddTriToMesh( const int meshId, const ts_vec3& v0, const ts_vec3& v1
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddScene                                                            |
 //  |  Loads a collection of meshes from a gltf file. An instance and a scene     |
-//  |  graph node is created for each mesh.                                 LH2'24|
+//  |  graph node is created for each mesh.                                 LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddScene( const char* sceneFile, const ts_mat4& transform )
 {
@@ -2963,7 +3061,7 @@ int Scene::AddScene( const char* sceneFile, const char* dir, const ts_mat4& tran
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddQuad                                                             |
 //  |  Create a mesh that consists of two triangles, described by a normal, a     |
-//  |  centroid position and a material.                                    LH2'24|
+//  |  centroid position and a material.                                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddQuad( ts_vec3 N, const ts_vec3 pos, const float width, const float height, const int matId, const int meshID )
 {
@@ -3018,7 +3116,7 @@ int Scene::AddQuad( ts_vec3 N, const ts_vec3 pos, const float width, const float
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddInstance                                                         |
-//  |  Add an instance of an existing mesh to the scene.                    LH2'24|
+//  |  Add an instance of an existing mesh to the scene.                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddInstance( const int nodeId )
 {
@@ -3029,7 +3127,7 @@ int Scene::AddInstance( const int nodeId )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddNode                                                             |
-//  |  Add a node to the scene.                                             LH2'24|
+//  |  Add a node to the scene.                                             LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddNode( Node* newNode )
 {
@@ -3040,7 +3138,7 @@ int Scene::AddNode( Node* newNode )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddChildNode                                                        |
-//  |  Add a child to a node.                                               LH2'24|
+//  |  Add a child to a node.                                               LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddChildNode( const int parentNodeId, const int childNodeId )
 {
@@ -3051,7 +3149,7 @@ int Scene::AddChildNode( const int parentNodeId, const int childNodeId )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::GetChildId                                                          |
-//  |  Get the node index of a child of a node.                             LH2'24|
+//  |  Get the node index of a child of a node.                             LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::GetChildId( const int parentId, const int childIdx )
 {
@@ -3064,7 +3162,7 @@ int Scene::GetChildId( const int parentId, const int childIdx )
 //  |  This also removes the node from the rootNodes vector. Note that this will  |
 //  |  only work correctly if the node is not part of a hierarchy, which is the   |
 //  |  case for nodes that have been created using AddInstance.                   |
-//  |  TODO: This will not delete any textures or materials.                LH2'24|
+//  |  TODO: This will not delete any textures or materials.                LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Scene::RemoveNode( const int nodeId )
 {
@@ -3083,7 +3181,7 @@ void Scene::RemoveNode( const int nodeId )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::FindTextureID                                                       |
-//  |  Return a texture ID if it already exists.                            LH2'24|
+//  |  Return a texture ID if it already exists.                            LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindTextureID( const char* name )
 {
@@ -3094,7 +3192,7 @@ int Scene::FindTextureID( const char* name )
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::FindOrCreateTexture                                                 |
 //  |  Return a texture: if it already exists, return the existing texture (after |
-//  |  increasing its refCount), otherwise, create a new texture.           LH2'24|
+//  |  increasing its refCount), otherwise, create a new texture.           LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindOrCreateTexture( const string& origin, const uint32_t modFlags )
 {
@@ -3111,7 +3209,7 @@ int Scene::FindOrCreateTexture( const string& origin, const uint32_t modFlags )
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::FindOrCreateMaterial                                                |
 //  |  Return a material: if it already exists, return the existing material      |
-//  |  (after increasing its refCount), otherwise, create a new texture.    LH2'24|
+//  |  (after increasing its refCount), otherwise, create a new texture.    LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindOrCreateMaterial( const string& name )
 {
@@ -3131,7 +3229,7 @@ int Scene::FindOrCreateMaterial( const string& name )
 //  |  Scene::FindOrCreateMaterialCopy                                            |
 //  |  Create an untextured material, based on an existing material. This copy is |
 //  |  to be used for a triangle that only reads a single texel from a texture;   |
-//  |  using a single color is more efficient.                              LH2'24|
+//  |  using a single color is more efficient.                              LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindOrCreateMaterialCopy( const int matID, const uint32_t color )
 {
@@ -3162,7 +3260,7 @@ int Scene::FindOrCreateMaterialCopy( const int matID, const uint32_t color )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::FindMaterialID                                                      |
-//  |  Find the ID of a material with the specified name.                   LH2'24|
+//  |  Find the ID of a material with the specified name.                   LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindMaterialID( const char* name )
 {
@@ -3172,7 +3270,7 @@ int Scene::FindMaterialID( const char* name )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::FindMaterialIDByOrigin                                              |
-//  |  Find the ID of a material with the specified origin.                 LH2'24|
+//  |  Find the ID of a material with the specified origin.                 LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindMaterialIDByOrigin( const char* name )
 {
@@ -3183,7 +3281,7 @@ int Scene::FindMaterialIDByOrigin( const char* name )
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::FindNextMaterialID                                                  |
 //  |  Find the ID of a material with the specified name, with an ID greater than |
-//  |  the specified one. Used to find materials with the same name.        LH2'24|
+//  |  the specified one. Used to find materials with the same name.        LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindNextMaterialID( const char* name, const int matID )
 {
@@ -3194,7 +3292,7 @@ int Scene::FindNextMaterialID( const char* name, const int matID )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::FindNode                                                            |
-//  |  Find the ID of a node with the specified name.                       LH2'24|
+//  |  Find the ID of a node with the specified name.                       LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::FindNode( const char* name )
 {
@@ -3203,8 +3301,104 @@ int Scene::FindNode( const char* name )
 }
 
 //  +-----------------------------------------------------------------------------+
+//  |  Scene::CreateOpacityMicroMaps                                              |
+//  |  process all meshes in the specified subtree and produce opacity            |
+//  |  maps for them.                                                       LH2'25|
+//  +-----------------------------------------------------------------------------+
+void Scene::CreateOpacityMicroMaps( const int nodeId )
+{
+	Node* node = nodePool[nodeId];
+	int m = node->meshID;
+	if (m > -1) meshPool[m]->CreateOpacityMicroMaps();
+	for (int id : node->childIdx) CreateOpacityMicroMaps( id );
+}
+
+//  +-----------------------------------------------------------------------------+
+//  |  Scene::SetBVHType                                                          |
+//  |  set the BVH type for the meshes in a subtree.                        LH2'25|
+//  +-----------------------------------------------------------------------------+
+void Scene::SetBVHType( const int nodeId, const int t )
+{
+	Node* node = nodePool[nodeId];
+	int m = node->meshID;
+	if (m > -1) meshPool[m]->blas.bvhType = t;
+	for (int id : node->childIdx) SetBVHType( id, t );
+}
+
+//  +-----------------------------------------------------------------------------+
+//  |  Scene::CollapseMeshes                                                      |
+//  |  Combine all meshes in this subtree into a single one.                LH2'25|
+//  +-----------------------------------------------------------------------------+
+void Scene::CollapseMeshes( const int subtreeRoot )
+{
+	// count triangles in subtree
+	int triCount = 0, firstMesh = -1, firstNode = -1, stack[128], stackPtr = 0;
+	bool badMesh = false;
+	int nodeId = subtreeRoot;
+	while (1)
+	{
+		Node* node = nodePool[nodeId];
+		int m = node->meshID;
+		if (m > -1)
+		{
+			if (meshPool[m]->joints.size() > 0 || meshPool[m]->omaps != 0)
+			{
+				// can't collapse animation / meshes with opacity micromaps
+				badMesh = true;
+				break;
+			}
+			triCount += (int)meshPool[m]->triangles.size();
+			if (firstMesh == -1) firstMesh = m, firstNode = nodeId;
+		}
+		for (int id : node->childIdx) stack[stackPtr++] = id;
+		if (stackPtr == 0) break;
+		nodeId = stack[--stackPtr];
+	}
+	// safety net
+	if (triCount == 0 /* no meshes in subtree */ || badMesh /* issues */) return;
+	// make room for extra data in 'firstMesh'
+	Mesh* first = meshPool[firstMesh];
+	first->vertices.resize( triCount * 3 );
+	first->triangles.resize( triCount );
+	// append data from all meshes in subtree and delete them.
+	nodeId = subtreeRoot;
+	while (1)
+	{
+		Node* node = nodePool[nodeId];
+		int m = node->meshID;
+		if (m > -1 && m != firstMesh)
+		{
+			Mesh* second = meshPool[m];
+			first->vertices.insert( first->vertices.end(), second->vertices.begin(), second->vertices.end() );
+			first->triangles.insert( first->triangles.end(), second->triangles.begin(), second->triangles.end() );
+			second->ID = -1; // mesh will not be included in BVH builds.
+			node->meshID = -1;
+			// erase storage of second node
+			second->vertices.clear();
+			second->triangles.clear();
+			second->materialList.clear();
+			meshPool[m] = 0;
+		#if 0
+			// erasing it from the meshPool messes up our administration..
+			meshPool.erase( std::find( meshPool.begin(), meshPool.end(), second ) );
+		#endif
+		}
+		for (int id : node->childIdx) stack[stackPtr++] = id;
+		if (stackPtr == 0) break;
+		nodeId = stack[--stackPtr];
+	}
+	// renumber mesh 'first'
+	for (int i = 0; i < (int)meshPool.size(); i++) if (meshPool[i] == first)
+	{
+		first->ID = i;
+		nodePool[firstNode]->meshID = i;
+	}
+	// all done!
+}
+
+//  +-----------------------------------------------------------------------------+
 //  |  Scene::SetNodeTransform                                                    |
-//  |  Set the local transform for the specified node.                      LH2'24|
+//  |  Set the local transform for the specified node.                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Scene::SetNodeTransform( const int nodeId, const ts_mat4& transform )
 {
@@ -3214,7 +3408,7 @@ void Scene::SetNodeTransform( const int nodeId, const ts_mat4& transform )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::GetNodeTransform                                                    |
-//  |  Set the local transform for the specified node.                      LH2'24|
+//  |  Set the local transform for the specified node.                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 const ts_mat4& Scene::GetNodeTransform( const int nodeId )
 {
@@ -3225,7 +3419,7 @@ const ts_mat4& Scene::GetNodeTransform( const int nodeId )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::ResetAnimation                                                      |
-//  |  Reset the indicated animation.                                       LH2'24|
+//  |  Reset the indicated animation.                                       LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Scene::ResetAnimation( const int animId )
 {
@@ -3235,7 +3429,7 @@ void Scene::ResetAnimation( const int animId )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::ResetAnimation                                                      |
-//  |  Update the indicated animation.                                      LH2'24|
+//  |  Update the indicated animation.                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Scene::UpdateAnimation( const int animId, const float dt )
 {
@@ -3246,7 +3440,7 @@ void Scene::UpdateAnimation( const int animId, const float dt )
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::CreateTexture                                                       |
 //  |  Return a texture. Create it anew, even if a texture with the same origin   |
-//  |  already exists.                                                      LH2'24|
+//  |  already exists.                                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::CreateTexture( const string& origin, const uint32_t modFlags )
 {
@@ -3259,7 +3453,7 @@ int Scene::CreateTexture( const string& origin, const uint32_t modFlags )
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddMaterial                                                         |
 //  |  Adds an existing Material* and returns the ID. If the material             |
-//  |  with that pointer is already added, it is not added again.           LH2'24|
+//  |  with that pointer is already added, it is not added again.           LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddMaterial( Material* material )
 {
@@ -3272,7 +3466,7 @@ int Scene::AddMaterial( Material* material )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddMaterial                                                         |
-//  |  Create a material, with a limited set of parameters.                 LH2'24|
+//  |  Create a material, with a limited set of parameters.                 LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddMaterial( const ts_vec3 color, const char* name )
 {
@@ -3284,7 +3478,7 @@ int Scene::AddMaterial( const ts_vec3 color, const char* name )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddPointLight                                                       |
-//  |  Create a point light and add it to the scene.                        LH2'24|
+//  |  Create a point light and add it to the scene.                        LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddPointLight( const ts_vec3 pos, const ts_vec3 radiance )
 {
@@ -3298,7 +3492,7 @@ int Scene::AddPointLight( const ts_vec3 pos, const ts_vec3 radiance )
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddSpotLight                                                        |
-//  |  Create a spot light and add it to the scene.                         LH2'24|
+//  |  Create a spot light and add it to the scene.                         LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddSpotLight( const ts_vec3 pos, const ts_vec3 direction, const float inner, const float outer, const ts_vec3 radiance )
 {
@@ -3315,7 +3509,7 @@ int Scene::AddSpotLight( const ts_vec3 pos, const ts_vec3 direction, const float
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::AddDirectionalLight                                                 |
-//  |  Create a directional light and add it to the scene.                  LH2'24|
+//  |  Create a directional light and add it to the scene.                  LH2'25|
 //  +-----------------------------------------------------------------------------+
 int Scene::AddDirectionalLight( const ts_vec3 direction, const ts_vec3 radiance )
 {
@@ -3329,7 +3523,7 @@ int Scene::AddDirectionalLight( const ts_vec3 direction, const ts_vec3 radiance 
 
 //  +-----------------------------------------------------------------------------+
 //  |  Scene::UpdateSceneGraph (formerly in RenderSystem)                         |
-//  |  Walk the scene graph, updating all node matrices.                    LH2'24|
+//  |  Walk the scene graph, updating all node matrices.                    LH2'25|
 //  +-----------------------------------------------------------------------------+
 void Scene::UpdateSceneGraph( const float deltaTime )
 {
@@ -3350,7 +3544,9 @@ void Scene::UpdateSceneGraph( const float deltaTime )
 	{
 		delete bvhList;
 		bvhList = new tinybvh::BVHBase * [meshPool.size()];
-		for (int i = 0; i < meshPool.size(); i++) bvhList[i] = meshPool[i]->blas.dynamicBVH;
+		for (int i = 0; i < meshPool.size(); i++) if (meshPool[i])
+			bvhList[i] = meshPool[i]->blas.dynamicBVH;
+		bvhListSize = (uint32_t)meshPool.size();
 	}
 	if (defaultBVHType == GPU_DYNAMIC || defaultBVHType == GPU_RIGID)
 	{

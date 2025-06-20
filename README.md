@@ -1,10 +1,10 @@
-# dev
+# tinybvh/dev
 This is the **development branch** for TinyBVH. Changes get tested here first.
 
-# tinybvh
+# TinyBVH
 Single-header BVH construction and traversal library written as "Sane C++" (or "C with classes"). Some C++11 is used, e.g. for threading. The library has no dependencies. 
 
-# tinyocl
+# TinyOCL
 Single-header OpenCL library, which helps you select and initialize a device. It also loads, compiles and runs kernels, with several convenient features:
 * Include-file expansion for AMD devices
 * Multi-argument passing
@@ -12,7 +12,7 @@ Single-header OpenCL library, which helps you select and initialize a device. It
 * Vendor and architecture detection and propagation to #defines in OpenCL code
 * ..And many other things.
 
-![Bistro](images/invasion.png)
+![Bistro](images/combined.jpg)
 
 To use tinyocl, just include ````tiny_ocl.h````; this will automatically cause linking with ````OpenCL.lib```` in the 'external' folder, which in turn passes on work to vendor-specific driver code. But all that is not your problem!
 
@@ -21,7 +21,7 @@ Note that the ````tiny_bvh.h```` library will work without ````tiny_ocl.h```` an
 # BVH?
 A Bounding Volume Hierarchy is a data structure used to quickly find intersections in a virtual scene; most commonly between a ray and a group of triangles. You can read more about this in a series of articles on the subject: https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics .
 
-Right now tinybvh comes with the following builders:
+Right now TinyBVH comes with the following builders:
 * ````BVH::Build```` : Efficient plain-C/C+ binned SAH BVH builder which should run on any platform.
 * ````BVH::BuildAVX```` : A highly optimized version of BVH::Build for Intel CPUs.
 * ````BVH::BuildHQ```` : A 'spatial splits' BVH builder, for highest BVH quality.
@@ -43,7 +43,7 @@ A BVH in any format can be _rebuilt_ at any time by calling the ````Build```` me
 
 Most layouts may be serialized and de-serialized via ````::Save```` and ````::Load````.
 
-A more complete overview of tinybvh functionality can be found in the [Basic Use Manual](https://jacco.ompf2.com/2025/01/24/tinybvh-manual-basic-use) and the [Advanced Topics Manual](https://jacco.ompf2.com/2025/01/25/tinybvh-manual-advanced).
+A more complete overview of TinyBVH functionality can be found in the [Basic Use Manual](https://jacco.ompf2.com/2025/01/24/tinybvh-manual-basic-use) and the [Advanced Topics Manual](https://jacco.ompf2.com/2025/01/25/tinybvh-manual-advanced).
 
 # How To Use
 The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_minimal.cpp for an example. A Visual Studio 'solution' (.sln/.vcxproj) is included, as well as a CMake file. That being said: The examples consists of only a single source file, which can be compiled with clang or g++, e.g.:
@@ -146,7 +146,7 @@ Plans, ordered by priority:
 
 * Speed improvements:
   * Faster optimizer for AVX-capable CPUs
-* Demo of tinybvh on GPU using other apis:
+* Demo of TinyBVH on GPU using other apis:
   * Ray tracing in pure DirectX
   * SDL3 sample application
 * Bridge to rt hw / layouts:
@@ -163,7 +163,7 @@ Plans, ordered by priority:
   * Robust default origin offset
   * Engine layer
 
-# platforms
+# Platforms
 TinyBVH is a cross-platfrom library and should build on any platform that supports C++20 (the '20' bit is for threading). That being said, several platforms are specifically supported:
 * ````x86/x64 Windows/Linux````: These platforms benefit from highly optimized SSE/AVX/AVX2 traversal kernels.
 * ````OPENCL````: Although TinyBVH does not directly use OpenCL, GPU-specific BVHs can be constructed and example code for BLAS/TLAS traversal in OpenCL is provided.
@@ -172,13 +172,14 @@ TinyBVH is a cross-platfrom library and should build on any platform that suppor
 * ````ANDROID````: This platform benefits from ARM NEON support as well as aligned memory allocation.
 * ````APPLE````: This platform benefits from ARM NEON support, dedicated paths in GPU example code and specialized support in TinyBVH itself.
   
-# tinybvh in the Wild
-A list of projects using tinybvh:
-* [unity-tinybvh](https://github.com/andr3wmac/unity-tinybvh): An example implementation for tinybvh in Unity and a foundation for building compute based raytracing solutions, by Andrew MacIntyre.
+# TinyBVH in the Wild
+A list of projects using TinyBVH:
+* [EA SEED's Gigi](https://github.com/electronicarts/gigi/releases/tag/v1.0.0): Uses TinyBVH for WebGPU ray tracing, "..as fast as when using the DXR api in DX12".
+* [unity-tinybvh](https://github.com/andr3wmac/unity-tinybvh): An example implementation for TinyBVH in Unity and a foundation for building compute based raytracing solutions, by Andrew MacIntyre.
 * [TrenchBroomBFG](https://github.com/RobertBeckebans/TrenchBroomBFG), by Robert Beckebans. "TinyBVH allows to load bigger glTF 2 maps almost instantly instead of minutes". 
 
-# tinybvh Rust bindings
-The tinybvh library can now also be used from Rust, with the [Rust bindings](https://docs.rs/tinybvh-rs/latest/tinybvh_rs) provided by David Peicho.
+# TinyBVH Rust bindings
+The TinyBVH library can now also be used from Rust, with the [Rust bindings](https://docs.rs/tinybvh-rs/latest/tinybvh_rs) provided by David Peicho.
 
 Created or know about other projects? [Let me know](mailto:bikker.j@protonmail.com)!
 
