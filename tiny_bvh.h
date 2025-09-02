@@ -2584,7 +2584,8 @@ void BVH::PrepareHQBuild( const bvhvec4slice& vertices, const uint32_t* indices,
 		AlignedFree( fragment );
 		bvhNode = (BVHNode*)AlignedAlloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedNodes = spaceNeeded;
-		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
+		// memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
+		bvhNode[1] = {};
 		primIdx = (uint32_t*)AlignedAlloc( (primCount + slack) * sizeof( uint32_t ) );
 		fragment = (Fragment*)AlignedAlloc( (primCount + slack) * sizeof( Fragment ) );
 	}
