@@ -24,16 +24,16 @@
 #define REFIT_MBVH4
 #define REFIT_MBVH8
 #define TRAVERSE_2WAY_ST
-// #define TRAVERSE_ALT2WAY_ST
-// #define TRAVERSE_SOA2WAY_ST
+#define TRAVERSE_ALT2WAY_ST
+#define TRAVERSE_SOA2WAY_ST
 #define TRAVERSE_4WAY
 #define TRAVERSE_8WAY
 #define TRAVERSE_2WAY_DBL
 // #define TRAVERSE_CWBVH
-#define TRAVERSE_2WAY_MT
-#define TRAVERSE_2WAY_MT_PACKET
+// #define TRAVERSE_2WAY_MT
+// #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_OPTIMIZED_ST
-// #define TRAVERSE_8WAY_OPTIMIZED
+#define TRAVERSE_8WAY_OPTIMIZED
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 // #define MADMAN_BUILD_FAST
@@ -759,7 +759,6 @@ int main()
 	printf( "- BVH2 refitting: " );
 	BVH tmpBVH;
 	tmpBVH.Build( triangles, verts / 3 );
-	float sahBefore = tmpBVH.SAHCost();
 	for (int pass = 0; pass < 10; pass++)
 	{
 		if (pass == 1) t.reset();
@@ -1433,15 +1432,19 @@ int main()
 
 	// verify memory management
 	delete mybvh;
+	delete sweepbvh;
+	delete ref_bvh;
 	delete bvh_verbose;
 	delete bvh_double;
 	delete bvh_soa;
 	delete bvh_gpu;
 	delete bvh4;
+	delete bvh8;
 	delete bvh4_cpu;
+	delete bvh8_cpu;
 	delete bvh4_gpu;
+	delete bvh8_cpu_opt;
 	delete cwbvh;
-
 	printf( "all done." );
 	return 0;
 }

@@ -13,6 +13,9 @@ class GLTFDemo : public TheApp
 public:
 	// game flow methods
 	void Init();
+	void InitScene1();
+	void InitScene2();
+	void InitScene3();
 	void Tick( float );
 	bool UpdateCamera( float );
 	void Shutdown() { /* implement if you want to do something on exit */ }
@@ -28,11 +31,14 @@ public:
 	bvhvec3 eye = bvhvec3( -15.24f, 21.5f, 2.54f );
 	bvhvec3 view = tinybvh_normalize( bvhvec3( 0.826f, -0.438f, -0.356f ) );
 	bvhvec3 p1, p2, p3;
+	int balloon, tree1, tree2, drone, terrain;
 	// host-side mesh data
 	tinyscene::Scene scene;
 	// OpenCL kernels
 	Kernel* init = 0;
 	Kernel* render = 0;
+	Kernel* renderNormals = 0;
+	Kernel* renderDepth = 0;
 	// OpenCL buffers
 	Buffer* pixels = 0;
 	Buffer* instances = 0;
@@ -49,6 +55,7 @@ public:
 	Buffer* materials = 0;
 	Buffer* texels = 0;
 	Buffer* skyPixels = 0;
+	Buffer* IBL = 0;
 };
 
 } // namespace Tmpl8

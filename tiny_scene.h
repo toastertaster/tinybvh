@@ -105,8 +105,9 @@ THE SOFTWARE.
 
 #define	BVH_DYNAMIC			0	// BVH will be built as tinybvh::BVH / Build, for fast rebuilds
 #define BVH_RIGID			1	// BVH will be built as tinybvh::BVH8_CPU / BuildHQ, for fast traversal
-#define GPU_DYNAMIC			2	// BVH will be built as tinybvh::BVH_GPU, for fast rebuilds
-#define GPU_RIGID			3	// BVH will be built as tinybvh::BVH8_CWBVH, for fast traversal
+#define GPU_DYNAMIC			2	// BVH will be built with tinybvh::BVH_GPU::Build(..) - for refits/rebuilds
+#define GPU_RIGID			3	// BVH will be built as tinybvh::BVH8_GPU::BuildHQ(..) - for opacity maps
+#define GPU_STATIC			4	// BVH will be built as tinybvh::BVH8_CWBVH::BuildHQ(..) - for fast traversal
 
 namespace tinyscene
 {
@@ -406,7 +407,8 @@ public:
 			tinybvh::BVH_SoA* rigidBVH;
 		#endif
 			tinybvh::BVH_GPU* dynamicGPU;
-			tinybvh::BVH8_CWBVH* rigidGPU;
+			tinybvh::BVH_GPU* rigidGPU;
+			tinybvh::BVH8_CWBVH* staticGPU;
 		};
 	};
 	// constructor / destructor
@@ -424,14 +426,16 @@ public:
 		const ::std::vector<ts_vec4>& tmpTs, const ::std::vector<Pose>& tmpPoses,
 		const ::std::vector<ts_uint4>& tmpJoints, const ::std::vector<ts_vec4>& tmpWeights, const int materialIdx );
 	void BuildMaterialList();
-	void CreateOpacityMicroMaps();
+	void CreateOpacityMicroMaps( const int N = 32 );
 	void SetPose( const ::std::vector<float>& weights );
 	void SetPose( const Skin* skin );
 	// data members
 	::std::string name = "unnamed";		// name for the mesh
+	::std::string fileName = "";		// file from which the mesh was loaded
 	int ID = -1;						// unique ID for the mesh: position in mesh array
 	::std::vector<ts_vec4> vertices;	// model vertices, always 3 per triangle: vertices are *not* indexed.
 	::std::vector<FatTri> triangles;	// full triangles, to be used for shading
+	uint32_t omapN = 32;				// default; may be overridden
 	uint32_t* omaps = 0;				// at N=32: 1024 bit / 128 byte per triangle
 	::std::vector<ts_vec3> vertexNormals;	// vertex normals, 1 per vertex
 	::std::vector<int> materialList;	// list of materials used by the mesh; used to efficiently track light changes
@@ -784,12 +788,14 @@ public:
 	static int FindMaterialIDByOrigin( const char* name );
 	static int FindNextMaterialID( const char* name, const int matID );
 	static int FindNode( const char* name );
-	static void CollapseMeshes( const int nodeId );
-	static void CreateOpacityMicroMaps( const int nodeId );
+	static int FindMeshNode( const int nodeId, const int meshId );
+	static int CollapseMeshes( const int nodeId );
+	static void CreateOpacityMicroMaps( const int nodeId, const int N = 32 );
 	static void SetBVHType( const int nodeId, const int t );
 	static void SetNodeTransform( const int nodeId, const ts_mat4& transform );
 	static const ts_mat4& GetNodeTransform( const int nodeId );
 	static void ResetAnimation( const int animId );
+	static void ResetAnimations();
 	static void UpdateAnimation( const int animId, const float dt );
 	static int AnimationCount() { return (int)animations.size(); }
 	// scene construction / maintenance
@@ -814,6 +820,7 @@ public:
 	static int AddDirectionalLight( const ts_vec3 direction, const ts_vec3 radiance );
 	static void UpdateSceneGraph( const float deltaTime );
 	static void SetBVHDefault( const uint32_t t ) { defaultBVHType = t; }
+	static void CacheBVHs( bool v = true ) { bvhCaching = v; }
 	// data members
 	static inline ::std::vector<int> rootNodes;				// root node indices of loaded (or instanced) objects
 	static inline ::std::vector<Node*> nodePool;			// all scene nodes
@@ -831,6 +838,7 @@ public:
 	static inline tinybvh::BVH* tlas = 0;					// top-level acceleration structure
 	static inline tinybvh::BVH_GPU* gpuTlas = 0;			// top-level acceleration structure, gpu version
 	static inline uint32_t defaultBVHType = BVH_DYNAMIC;	// BVH_RIGID is faster but more restrictive
+	static inline bool bvhCaching = false;					// caching for acceleration structures
 };
 
 } // namespace tinyscene
@@ -1031,6 +1039,7 @@ void SkyDome::Load( const char* filename, const ts_vec3 scale )
 		pixels = (ts_vec3*)malloc64( width * height * sizeof( ts_vec3 ) );
 		fread( pixels, 1, sizeof( ts_vec3 ) * width * height, f );
 		fclose( f );
+		printf( "done.\n" );
 	}
 	if (!pixels)
 	{
@@ -1053,8 +1062,7 @@ void SkyDome::Load( const char* filename, const ts_vec3 scale )
 		fclose( f );
 	}
 	// cache does not include scale so we can change it later
-	if (scale.x != 1.f || scale.y != 1.f || scale.z != 1.f)
-		for (int p = 0; p < width * height; ++p) pixels[p] = pixels[p] * scale;
+	for (int p = 0; p < width * height; ++p) pixels[p] = pixels[p] * pixels[p] * scale;
 }
 
 //  +-----------------------------------------------------------------------------+
@@ -1135,7 +1143,7 @@ void Mesh::LoadGeometry( const char* file, const char* dir, const float scale, c
 //  |  Mesh::LoadGeometryFromObj                                                  |
 //  |  Load an obj file using tinyobj.                                      LH2'25|
 //  +-----------------------------------------------------------------------------+
-void Mesh::LoadGeometryFromOBJ( const string& fileName, const char* directory, const ts_mat4& T, const bool flatShaded )
+void Mesh::LoadGeometryFromOBJ( const string& file, const char* directory, const ts_mat4& T, const bool flatShaded )
 {
 	// load obj file
 	::tinyobj::attrib_t attrib;
@@ -1143,8 +1151,8 @@ void Mesh::LoadGeometryFromOBJ( const string& fileName, const char* directory, c
 	vector<::tinyobj::material_t> materials;
 	map<string, uint32_t> textures;
 	string err, warn;
-	::tinyobj::LoadObj( &attrib, &shapes, &materials, &err, &warn, fileName.c_str(), directory );
-	SCENE_FATAL_ERROR_IF( err.size() > 0 || shapes.size() == 0, "tinyobj failed to load obj" /* , fileName.c_str(), err.c_str() */ );
+	::tinyobj::LoadObj( &attrib, &shapes, &materials, &err, &warn, file.c_str(), directory );
+	SCENE_FATAL_ERROR_IF( err.size() > 0 || shapes.size() == 0, "tinyobj failed to load obj" /* , file.c_str(), err.c_str() */ );
 	// material offset: if we loaded an object before this one, material indices should not start at 0.
 	int matIdxOffset = (int)Scene::materials.size();
 	// process materials
@@ -1158,7 +1166,7 @@ void Mesh::LoadGeometryFromOBJ( const string& fileName, const char* directory, c
 		// initialize
 		Material* material = new Material();
 		material->ID = (int)Scene::materials.size();
-		material->origin = fileName;
+		material->origin = file;
 		material->ConvertFrom( mtl );
 		material->flags |= Material::FROM_MTL;
 		Scene::materials.push_back( material );
@@ -1675,9 +1683,10 @@ void CreateOpacityMicroMap( Mesh* mesh, const int N, const int first, const int 
 {
 	const float fN = (float)N;
 	const float rN = 1.0f / fN;
+	const int dwordsPerTri = (N * N + 31) >> 5;
 	for (int i = first; i < last; i++)
 	{
-		uint32_t* map = mesh->omaps + i * ((N * N) / 32);
+		uint32_t* map = mesh->omaps + i * dwordsPerTri;
 		FatTri& tri = mesh->triangles[i];
 		const uint32_t matIdx = tri.material;
 		const Material* material = Scene::materials[matIdx];
@@ -1687,11 +1696,11 @@ void CreateOpacityMicroMap( Mesh* mesh, const int N, const int first, const int 
 			tex = Scene::textures[material->color.textureID];
 			if (!tex->idata) tex = 0; // can't use hdr textures for now.
 		}
-		if (!tex) { memset( map, 255, N * N / 8 ); continue; }
-		memset( map, 0, N * N / 8 );
+		if (!tex) { memset( map, 255, dwordsPerTri * 4 ); continue; }
+		memset( map, 0, dwordsPerTri * 4 );
 		const float u0 = tri.u0, u1 = tri.u1, u2 = tri.u2, w = (float)tex->width;
 		const float v0 = tri.v0, v1 = tri.v1, v2 = tri.v2, h = (float)tex->height;
-		const int iw = tex->width;
+		const int iw = tex->width, ih = tex->height;
 		for (int y = 0; y < N * 4; y++)
 		{
 			float v = ((float)y + 0.5f) * 0.25f * rN, u = 0.125f / fN;
@@ -1704,20 +1713,22 @@ void CreateOpacityMicroMap( Mesh* mesh, const int N, const int first, const int 
 				const int idx = (row * row) + int( v * fN ) + (diag - (N - 1 - row));
 				const float tu = u * u1 + v * u2 + (1 - u - v) * u0;
 				const float tv = u * v1 + v * v2 + (1 - u - v) * v0;
-				const int iu = (int)((tu - floorf( tu )) * w);
-				const int iv = (int)((tv - floorf( tv )) * h);
+				const int iu = min( iw - 1, (int)((tu - floorf( tu )) * w) );
+				const int iv = min( ih - 1, (int)((tv - floorf( tv )) * h) );
 				const uint32_t pixel = ((uint32_t*)tex->idata)[iu + iv * iw];
 				if ((pixel >> 24) > 2) map[idx >> 5] |= 1 << (idx & 31);
 			}
 		}
 	}
 }
-void Mesh::CreateOpacityMicroMaps()
+void Mesh::CreateOpacityMicroMaps( const int N /* defaults to 32, for 32 * 32 = 1024bits = 32 uints per tri */ )
 {
 	// fill the opacity maps: WIP, we simply take one texture sample.
-	const int N = 32; // i.e.: 32 * 32 = 1024bits = 128 bytes = 32 uints per tri.
+	printf( "creating opacity micromaps... " );
 	free64( omaps );
-	omaps = (uint32_t*)malloc64( triangles.size() * N * N / 8 );
+	uint32_t dwordsPerTri = (N * N + 31) >> 5;
+	omaps = (uint32_t*)malloc64( triangles.size() * dwordsPerTri * 4 );
+	omapN = N;
 	constexpr int slices = 32;
 	const int slice = (int)triangles.size() / slices;
 	vector<thread> jobs;
@@ -1729,6 +1740,7 @@ void Mesh::CreateOpacityMicroMaps()
 	}
 	for (int i = 0; i < slices; i++) jobs[i].join();
 	hasOpacityMicroMaps = true;
+	printf( "done.\n" );
 }
 
 //  +-----------------------------------------------------------------------------+
@@ -1987,7 +1999,7 @@ void Node::Update( const ts_mat4& T )
 				if (mesh->blas.dynamicBVH == 0)
 				{
 					mesh->blas.dynamicBVH = new tinybvh::BVH();
-					if (mesh->omaps) mesh->blas.dynamicBVH->SetOpacityMicroMaps( mesh->omaps, 32 );
+					if (mesh->omaps) mesh->blas.dynamicBVH->SetOpacityMicroMaps( mesh->omaps, mesh->omapN );
 				}
 				mesh->blas.dynamicBVH->Build( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
 				break;
@@ -2001,7 +2013,7 @@ void Node::Update( const ts_mat4& T )
 				#else
 					mesh->blas.rigidBVH = new tinybvh::BVH_SoA();
 				#endif
-					if (mesh->omaps) mesh->blas.rigidBVH->SetOpacityMicroMaps( mesh->omaps, 32 );
+					if (mesh->omaps) mesh->blas.rigidBVH->SetOpacityMicroMaps( mesh->omaps, mesh->omapN );
 				}
 				mesh->blas.rigidBVH->BuildHQ( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
 				break;
@@ -2009,18 +2021,98 @@ void Node::Update( const ts_mat4& T )
 				if (mesh->blas.dynamicGPU == 0)
 				{
 					mesh->blas.dynamicGPU = new tinybvh::BVH_GPU();
-					if (mesh->omaps) mesh->blas.dynamicGPU->SetOpacityMicroMaps( mesh->omaps, 32 );
+					if (mesh->omaps) mesh->blas.dynamicGPU->SetOpacityMicroMaps( mesh->omaps, mesh->omapN );
 				}
 				mesh->blas.dynamicGPU->Build( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
 				break;
 			case GPU_RIGID:
+			{
 				if (mesh->blas.rigidGPU == 0)
 				{
-					mesh->blas.rigidGPU = new tinybvh::BVH8_CWBVH();
-					if (mesh->omaps) mesh->blas.rigidGPU->SetOpacityMicroMaps( mesh->omaps, 32 );
+					mesh->blas.rigidGPU = new tinybvh::BVH_GPU();
+					if (mesh->omaps) mesh->blas.rigidGPU->SetOpacityMicroMaps( mesh->omaps, mesh->omapN );
 				}
-				mesh->blas.rigidGPU->BuildHQ( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
-				break;
+				// attempt to load cached BVH
+				bool loaded = false;
+				char t[265] = "./cache/", b[265] = "./cache/";
+				if (Scene::bvhCaching && mesh->triangles.size() > 50'000)
+				{
+					printf( "attempt to load cached bvh... " );
+					strcat( t, mesh->fileName.c_str() );
+					strcat( b, mesh->fileName.c_str() );
+					strcat( t, ".tri" );
+					strcat( b, ".bvh" );
+					tinybvh::BVH& bvh = mesh->blas.rigidGPU->bvh;
+					if (bvh.Load( b, (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() ))
+					{
+						printf( "done. Finalizing... " );
+						mesh->blas.rigidGPU->ConvertFrom( bvh, true );
+						loaded = true;
+						printf( "done.\n" );
+					}
+				}
+				if (!loaded)
+				{
+					mesh->blas.rigidGPU->BuildHQ( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
+					if (Scene::bvhCaching && mesh->triangles.size() > 50'000)
+					{
+						printf( "not found: building... " );
+						FILE* f = fopen( t, "wb" );
+						unsigned count = (unsigned)mesh->triangles.size();
+						fwrite( &count, 1, 4, f );
+						fwrite( mesh->vertices.data(), 16 * 3, count, f );
+						fclose( f );
+						mesh->blas.rigidGPU->bvh.Save( b );
+						printf( "done.\n" );
+					}
+				}
+			}
+			break;
+			case GPU_STATIC:
+			{
+				if (mesh->blas.staticGPU == 0)
+				{
+					mesh->blas.staticGPU = new tinybvh::BVH8_CWBVH();
+					if (mesh->omaps) mesh->blas.staticGPU->SetOpacityMicroMaps( mesh->omaps, mesh->omapN );
+				}
+				// attempt to load cached BVH
+				bool loaded = false;
+				char t[265] = "./cache/", b[265] = "./cache/";
+				if (Scene::bvhCaching)
+				{
+					printf( "attempt to load cached bvh... " );
+					strcat( t, mesh->fileName.c_str() );
+					strcat( b, mesh->fileName.c_str() );
+					strcat( t, ".tri" );
+					strcat( b, ".bvh" );
+					tinybvh::BVH& bvh = mesh->blas.staticGPU->bvh8.bvh;
+					if (bvh.Load( b, (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() ))
+					{
+						printf( "done. Finalizing... " );
+						loaded = true;
+						bvh.SplitLeafs( 3 );
+						mesh->blas.staticGPU->bvh8.ConvertFrom( bvh, true );
+						mesh->blas.staticGPU->ConvertFrom( mesh->blas.staticGPU->bvh8, true );
+						printf( "done.\n" );
+					}
+				}
+				if (!loaded)
+				{
+					mesh->blas.staticGPU->BuildHQ( (tinybvh::bvhvec4*)mesh->vertices.data(), (unsigned)mesh->triangles.size() );
+					if (Scene::bvhCaching)
+					{
+						printf( "not found: building... " );
+						FILE* f = fopen( t, "wb" );
+						unsigned count = (unsigned)mesh->triangles.size();
+						fwrite( &count, 1, 4, f );
+						fwrite( mesh->vertices.data(), 16 * 3, count, f );
+						fclose( f );
+						mesh->blas.staticGPU->bvh8.bvh.Save( b );
+						printf( "done.\n" );
+					}
+				}
+			}
+			break;
 			default:
 				// .. invalid bvh type.
 				break;
@@ -2952,9 +3044,13 @@ int Scene::AddScene( const char* sceneFile, const char* dir, const ts_mat4& tran
 			return retVal;
 		}
 		else if (extension4.compare( ".gltf" ) == 0)
+		{
 			ret = loader.LoadASCIIFromFile( &gltfModel, &err, &warn, cleanFileName.c_str() );
+		}
 		else if (extension3.compare( ".bin" ) == 0 || extension3.compare( ".glb" ) == 0)
+		{
 			ret = loader.LoadBinaryFromFile( &gltfModel, &err, &warn, cleanFileName.c_str() );
+		}
 	}
 	if (!warn.empty()) printf( "Warn: %s\n", warn.c_str() );
 	if (!err.empty()) printf( "Err: %s\n", err.c_str() );
@@ -3022,6 +3118,17 @@ int Scene::AddScene( const char* sceneFile, const char* dir, const ts_mat4& tran
 		tinygltf::Mesh& gltfMesh = gltfModel.meshes[i];
 		Mesh* newMesh = new Mesh( gltfMesh, gltfModel, matIdx, gltfModel.materials.size() == 0 ? 0 : -1 );
 		newMesh->ID = (int)i + meshBase;
+		// prepare file name ID for mesh
+		char fileID[256];
+		strcpy( fileID, sceneFile );
+		if (strlen( fileID ) > 4)
+		{
+			if (fileID[strlen( fileID ) - 4] == '.') fileID[strlen( fileID ) - 4] = 0;
+			if (fileID[strlen( fileID ) - 5] == '.') fileID[strlen( fileID ) - 5] = 0;
+		}
+		strcat( fileID, "_9999" );
+		for (int d = 1000, i = 0; i < 4; i++, d /= 10) fileID[strlen( fileID ) - 4 + i] = (newMesh->ID / d) % 10 + '0';
+		newMesh->fileName = string( fileID );
 		meshPool.push_back( newMesh );
 	}
 	// push an extra node that holds a transform for the gltf scene
@@ -3305,12 +3412,12 @@ int Scene::FindNode( const char* name )
 //  |  process all meshes in the specified subtree and produce opacity            |
 //  |  maps for them.                                                       LH2'25|
 //  +-----------------------------------------------------------------------------+
-void Scene::CreateOpacityMicroMaps( const int nodeId )
+void Scene::CreateOpacityMicroMaps( const int nodeId, const int N )
 {
 	Node* node = nodePool[nodeId];
 	int m = node->meshID;
-	if (m > -1) meshPool[m]->CreateOpacityMicroMaps();
-	for (int id : node->childIdx) CreateOpacityMicroMaps( id );
+	if (m > -1) meshPool[m]->CreateOpacityMicroMaps( N );
+	for (int id : node->childIdx) CreateOpacityMicroMaps( id, N );
 }
 
 //  +-----------------------------------------------------------------------------+
@@ -3326,15 +3433,33 @@ void Scene::SetBVHType( const int nodeId, const int t )
 }
 
 //  +-----------------------------------------------------------------------------+
-//  |  Scene::CollapseMeshes                                                      |
-//  |  Combine all meshes in this subtree into a single one.                LH2'25|
+//  |  Scene::FindMeshNode                                                        |
+//  |  Find in a subtree the node that references the specified mesh.       LH2'25|
 //  +-----------------------------------------------------------------------------+
-void Scene::CollapseMeshes( const int subtreeRoot )
+int Scene::FindMeshNode( const int nodeId, const int meshId )
+{
+	Node* node = nodePool[nodeId];
+	if (node->meshID == meshId) return nodeId;
+	for (int id : node->childIdx)
+	{
+		int r = FindMeshNode( id, meshId );
+		if (r != -1) return r;
+	}
+	return -1;
+}
+
+//  +-----------------------------------------------------------------------------+
+//  |  Scene::CollapseMeshes                                                      |
+//  |  Combine all meshes in this subtree into a single one.                      |
+//  |  Returns the node index of the mesh.                                  LH2'25|
+//  +-----------------------------------------------------------------------------+
+int Scene::CollapseMeshes( const int subtreeRoot )
 {
 	// count triangles in subtree
 	int triCount = 0, firstMesh = -1, firstNode = -1, stack[128], stackPtr = 0;
 	bool badMesh = false;
 	int nodeId = subtreeRoot;
+	printf( "collapsing subtree into single mesh... " );
 	while (1)
 	{
 		Node* node = nodePool[nodeId];
@@ -3355,7 +3480,7 @@ void Scene::CollapseMeshes( const int subtreeRoot )
 		nodeId = stack[--stackPtr];
 	}
 	// safety net
-	if (triCount == 0 /* no meshes in subtree */ || badMesh /* issues */) return;
+	if (triCount == 0 /* no meshes in subtree */ || badMesh /* issues */) return 0;
 	// make room for extra data in 'firstMesh'
 	Mesh* first = meshPool[firstMesh];
 	first->vertices.resize( triCount * 3 );
@@ -3394,6 +3519,8 @@ void Scene::CollapseMeshes( const int subtreeRoot )
 		nodePool[firstNode]->meshID = i;
 	}
 	// all done!
+	printf( "done.\n" );
+	return firstMesh;
 }
 
 //  +-----------------------------------------------------------------------------+
@@ -3425,6 +3552,15 @@ void Scene::ResetAnimation( const int animId )
 {
 	if (animId < 0 || animId >= animations.size()) return;
 	animations[animId]->Reset();
+}
+
+//  +-----------------------------------------------------------------------------+
+//  |  Scene::ResetAnimations                                                     |
+//  |  Reset all animations.                                                LH2'25|
+//  +-----------------------------------------------------------------------------+
+void Scene::ResetAnimations()
+{
+	for (auto a : animations) a->Reset();
 }
 
 //  +-----------------------------------------------------------------------------+
@@ -3548,7 +3684,7 @@ void Scene::UpdateSceneGraph( const float deltaTime )
 			bvhList[i] = meshPool[i]->blas.dynamicBVH;
 		bvhListSize = (uint32_t)meshPool.size();
 	}
-	if (defaultBVHType == GPU_DYNAMIC || defaultBVHType == GPU_RIGID)
+	if (defaultBVHType == GPU_DYNAMIC || defaultBVHType == GPU_RIGID || defaultBVHType == GPU_STATIC)
 	{
 		if (!gpuTlas) gpuTlas = new tinybvh::BVH_GPU();
 		gpuTlas->Build( instPool.data(), (uint32_t)instPool.size(), bvhList, bvhListSize );
