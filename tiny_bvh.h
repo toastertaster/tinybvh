@@ -200,6 +200,8 @@ THE SOFTWARE.
 #include <vector>
 #include <thread> // for threaded builds
 
+#include <functional>
+
 // Platform-independent compile-time warnings.
 #define EMIT_COMPILER_WARNING_STRINGIFY0(x) #x
 #define EMIT_COMPILER_WARNING_STRINGIFY1(x) EMIT_COMPILER_WARNING_STRINGIFY0(x)
@@ -255,6 +257,7 @@ WARNING( "NEON not enabled in compilation." )
 
 namespace tinybvh {
 static std::function<void(float)> progress_tracker = [](float) {};
+static std::atomic<std::size_t> progress_tracker_completed_prims;
 }
 
 // aligned memory allocation
@@ -928,7 +931,7 @@ public:
 	void BuildAVX( uint32_t nodeIdx = 0, uint32_t depth = 0, uint32_t subtreeNewNodePtr = 0 );
 	void PrepareHQBuild( const bvhvec4slice& vertices, const uint32_t* indices, const uint32_t prims );
 	void BuildHQ();
-	void BuildHQTask( uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth, uint32_t sliceStart, uint32_t sliceEnd, uint32_t* triIdxB );
+	void BuildHQTask( uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth, uint32_t sliceStart, uint32_t sliceEnd, uint32_t* triIdxB, std::size_t primCount );
 	bool ClipFrag( const Fragment& orig, Fragment& newFrag, bvhvec3 bmin, bvhvec3 bmax, bvhvec3 minDim, const uint32_t splitAxis ) const;
 	void SplitFrag( const Fragment& orig, Fragment& left, Fragment& right, const bvhvec3& minDim, const uint32_t splitAxis, const float splitPos, bool& leftOK, bool& rightOK ) const;
 protected:
@@ -986,9 +989,6 @@ public:
 	void BuildAVXBinTask( const uint32_t first, const uint32_t last, __m256* binbox, __m256* orig,
 		uint32_t* count, const __m128& nmin4, const __m128& rpd4 );
 #endif
-
-	std::size_t total;
-	std::atomic<std::size_t>* done;
 };
 
 class VoxelSet : public BVHBase // just so it can be attached conveniently in a TLAS
@@ -2651,14 +2651,16 @@ float BVH::NoSplitCostSAH( const int Nparent ) const
 
 void BuildHQTask_(
 	uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth,
-	uint32_t sliceStart, uint32_t sliceEnd, uint32_t* idxTmp, BVH* bvh
+	uint32_t sliceStart, uint32_t sliceEnd, uint32_t* idxTmp, BVH* bvh,
+	std::size_t primCount
 )
 {
-	bvh->BuildHQTask( nodeIdx, depth, maxDepth, sliceStart, sliceEnd, idxTmp );
+	bvh->BuildHQTask( nodeIdx, depth, maxDepth, sliceStart, sliceEnd, idxTmp, primCount );
 }
 void BVH::BuildHQTask(
 	uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth,
-	uint32_t sliceStart, uint32_t sliceEnd, uint32_t* idxTmp
+	uint32_t sliceStart, uint32_t sliceEnd, uint32_t* idxTmp,
+	std::size_t primCount
 )
 {
 	// prepare subdivision
@@ -2803,6 +2805,9 @@ void BVH::BuildHQTask(
 			{
 				for (uint32_t i = 0; i < node.triCount; i++)
 					primIdx[node.leftFirst + i] = fragment[primIdx[node.leftFirst + i]].primIdx;
+				progress_tracker(
+					(progress_tracker_completed_prims.fetch_add(node.triCount) + node.triCount) / 
+					float(primCount));
 				break; // not splitting is better.
 			}
 			// double-buffered partition
@@ -2911,8 +2916,8 @@ void BVH::BuildHQTask(
 			// recurse
 			if (depth < maxDepth && threadedBuild)
 			{
-				std::thread t1( &BuildHQTask_, leftChildIdx, depth + 1, maxDepth, sliceStart, (A + B) >> 1, idxTmp, this );
-				std::thread t2( &BuildHQTask_, rightChildIdx, depth + 1, maxDepth, (A + B) >> 1, sliceEnd, idxTmp, this );
+				std::thread t1( &BuildHQTask_, leftChildIdx, depth + 1, maxDepth, sliceStart, (A + B) >> 1, idxTmp, this, primCount );
+				std::thread t2( &BuildHQTask_, rightChildIdx, depth + 1, maxDepth, (A + B) >> 1, sliceEnd, idxTmp, this, primCount );
 				t1.join();
 				t2.join(); // TODO: join is only needed in the 'all done' section below.
 				break;
@@ -2945,9 +2950,12 @@ void BVH::BuildHQ()
 		newNodePtr = 2;
 		nextFrag = triCount;
 	}
+
+	progress_tracker_completed_prims = 0;
+
 	// subdivide recursively
 	uint32_t nodeIdx = 0, sliceStart = 0, sliceEnd = triCount + slack, depth = 0;
-	BuildHQTask( nodeIdx, depth, 5, sliceStart, sliceEnd, idxTmp );
+	BuildHQTask( nodeIdx, depth, 5, sliceStart, sliceEnd, idxTmp, triCount );
 	// all done.
 	AlignedFree( idxTmp );
 	aabbMin = bvhNode[0].aabbMin, aabbMax = bvhNode[0].aabbMax;
@@ -4367,8 +4375,6 @@ void BVH_Verbose::Optimize( const uint32_t iterations, const bool extreme, bool 
 			RefitUp( Nid );
 		}
 		Refit( 0, true );
-
-		progress_tracker((i+1)/(float)iterations);
 	}
 	AlignedFree( sortList );
 }
@@ -6356,7 +6362,6 @@ void BVH::PrepareAVXBuild( const bvhvec4slice& vertices, const uint32_t* indices
 	// reset node pool
 	uint32_t primCount = prims > 0 ? prims : vertices.count / 3;
 	const uint32_t spaceNeeded = primCount * 2;
-	BVH_FATAL_ERROR_IF( spaceNeeded<2, "BVH::BuildAVX( .. ), no primitives." );
 	if (allocatedNodes < spaceNeeded)
 	{
 		AlignedFree( bvhNode );
@@ -6365,8 +6370,7 @@ void BVH::PrepareAVXBuild( const bvhvec4slice& vertices, const uint32_t* indices
 		primIdx = (uint32_t*)AlignedAlloc( primCount * sizeof( uint32_t ) );
 		bvhNode = (BVHNode*)AlignedAlloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedNodes = spaceNeeded;
-		// memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
-		bvhNode[1] = {};
+		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
 		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
 	}
 	else BVH_FATAL_ERROR_IF( !rebuildable, "BVH::BuildAVX( .. ), bvh not rebuildable." );
@@ -6458,12 +6462,6 @@ void BVH::BuildAVXBinTask( const uint32_t first, const uint32_t last, __m256* bi
 void BuildAVX_( uint32_t n, uint32_t d, uint32_t s, BVH* bvh ) { bvh->BuildAVX( n, d, s ); }
 void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth, uint32_t subtreeNewNodePtr )
 {
-	std::atomic<std::size_t> _done = 0;
-	if (nodeIdx==0) {
-		const BVHNode& root = bvhNode[0];
-		this->total = root.triCount; this->done = &_done;
-	}
-
 	// aligned data
 	constexpr uint32_t slices = 8;
 	ALIGNED( 64 ) __m256 slicebinbox[slices][3 * AVXBINS];
@@ -6551,10 +6549,7 @@ void BVH::BuildAVX( uint32_t nodeIdx, uint32_t depth, uint32_t subtreeNewNodePtr
 			}
 			splitCost = c_trav + c_int * rSAV * splitCost;
 			float noSplitCost = (float)node.triCount * c_int;
-			if (splitCost >= noSplitCost) {
-				progress_tracker(((*done)+=node.triCount)/float(total));
-				break; // not splitting is better.
-			}
+			if (splitCost >= noSplitCost) break; // not splitting is better.
 			// in-place partition
 			const float rpd = (*(bvhvec3*)&rpd4)[bestAxis], nmin = (*(bvhvec3*)&nmin4)[bestAxis];
 			uint32_t i = node.leftFirst, j = node.leftFirst + node.triCount, t, fr = primIdx[i];
