@@ -466,6 +466,11 @@ inline int32_t tinybvh_clamp( const int32_t x, const int32_t a, const int32_t b 
 template <class T> inline static void tinybvh_swap( T& a, T& b ) { T t = a; a = b; b = t; }
 inline float tinybvh_half_area( const bvhvec3& v ) { return v.x < -BVH_FAR ? 0 : (v.x * v.y + v.y * v.z + v.z * v.x); } // for SAH calculations
 inline uint32_t tinybvh_maxdim( const bvhvec3& v ) { uint32_t r = fabs( v.x ) > fabs( v.y ) ? 0 : 1; return fabs( v.z ) > fabs( v[r] ) ? 2 : r; }
+// Scale from a position within a node's extent to a SAH bin index. Axes with zero extent (flat nodes)
+// get scale 0, so every primitive lands in bin 0. Dividing by the zero extent instead yields 0 * inf = NaN,
+// and converting NaN to an integer bin index is undefined behavior.
+inline float tinybvh_binscale( const float bins, const float extent ) { return extent > 0 ? bins / extent : 0; }
+inline bvhvec3 tinybvh_binscale( const float bins, const bvhvec3& extent ) { return bvhvec3( tinybvh_binscale( bins, extent.x ), tinybvh_binscale( bins, extent.y ), tinybvh_binscale( bins, extent.z ) ); }
 
 // Operator overloads.
 // Only a minimal set is provided.
@@ -558,6 +563,8 @@ struct bvhdbl3
 
 inline bvhdbl3 tinybvh_min( const bvhdbl3& a, const bvhdbl3& b ) { return bvhdbl3( tinybvh_min( a.x, b.x ), tinybvh_min( a.y, b.y ), tinybvh_min( a.z, b.z ) ); }
 inline bvhdbl3 tinybvh_max( const bvhdbl3& a, const bvhdbl3& b ) { return bvhdbl3( tinybvh_max( a.x, b.x ), tinybvh_max( a.y, b.y ), tinybvh_max( a.z, b.z ) ); }
+inline double tinybvh_binscale( const double bins, const double extent ) { return extent > 0 ? bins / extent : 0; }
+inline bvhdbl3 tinybvh_binscale( const double bins, const bvhdbl3& extent ) { return bvhdbl3( tinybvh_binscale( bins, extent.x ), tinybvh_binscale( bins, extent.y ), tinybvh_binscale( bins, extent.z ) ); }
 
 #ifndef TINYBVH_USE_CUSTOM_VECTOR_TYPES
 
@@ -2326,7 +2333,7 @@ void BVH::Build( uint32_t nodeIdx, uint32_t depth )
 				binMin[a][i] = bvhvec3( BVH_FAR ), binMax[a][i] = bvhvec3( -BVH_FAR );
 			uint32_t count[3][BVHBINS];
 			memset( count, 0, BVHBINS * 3 * sizeof( uint32_t ) );
-			const bvhvec3 rpd3 = bvhvec3( bvhvec3( BVHBINS ) / (node.aabbMax - node.aabbMin) ), nmin3 = node.aabbMin;
+			const bvhvec3 rpd3 = tinybvh_binscale( (float)BVHBINS, node.aabbMax - node.aabbMin ), nmin3 = node.aabbMin;
 			for (uint32_t i = 0; i < node.triCount; i++) // process all tris for x,y and z at once
 			{
 				const uint32_t fi = primIdx[node.leftFirst + i];
@@ -2727,7 +2734,7 @@ void BVH::BuildHQTask(
 				binMin[a][i] = bvhvec3( BVH_FAR ), binMax[a][i] = bvhvec3( -BVH_FAR );
 			uint32_t count[3][MAXHQBINS];
 			for (uint32_t i = 0; i < 3; i++) memset( count[i], 0, binCount * 4 );
-			const bvhvec3 rpd3 = bvhvec3( bvhvec3( (float)binCount ) / (node.aabbMax - node.aabbMin) ), nmin3 = node.aabbMin;
+			const bvhvec3 rpd3 = tinybvh_binscale( (float)binCount, node.aabbMax - node.aabbMin ), nmin3 = node.aabbMin;
 			for (uint32_t i = 0; i < node.triCount; i++) // process all tris for x,y and z at once
 			{
 				const uint32_t fi = primIdx[node.leftFirst + i];
@@ -8030,7 +8037,7 @@ void BVH_Double::Build( uint64_t nodeIdx, uint32_t depth )
 				binMin[a][i] = bvhdbl3( BVH_DBL_FAR ), binMax[a][i] = bvhdbl3( -BVH_DBL_FAR );
 			uint32_t count[3][BVHBINS];
 			memset( count, 0, BVHBINS * 3 * sizeof( uint32_t ) );
-			const bvhdbl3 rpd3 = bvhdbl3( bvhdbl3( BVHBINS ) / (node.aabbMax - node.aabbMin) ), nmin3 = node.aabbMin;
+			const bvhdbl3 rpd3 = tinybvh_binscale( (double)BVHBINS, node.aabbMax - node.aabbMin ), nmin3 = node.aabbMin;
 			for (uint32_t i = 0; i < node.triCount; i++) // process all tris for x,y and z at once
 			{
 				const uint64_t fi = primIdx[node.leftFirst + i];
