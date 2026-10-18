@@ -837,7 +837,7 @@ public:
 	uint32_t* opmap = 0;			// opacity micro maps; opmapN^2 bits per triangle.
 	bool hasOpacityMicroMaps() const { return opmapN > 0; }
 	void SetOpacityMicroMaps( uint32_t* mapData, uint32_t N ) { opmap = mapData, opmapN = N; }
-	// Optional progress callback for BuildAVX, BuildHQ and Optimize, called with the
+	// Optional progress callback for Build, BuildAVX, BuildHQ and Optimize, called with the
 	// fraction completed in [0,1]. It belongs to this BVH, so concurrent builds of
 	// different BVHs report independently. Threaded builds call it from several
 	// threads at once.
@@ -939,7 +939,8 @@ public:
 	void Intersect256RaysSSE( Ray* packet ) const; // requires BVH_USEAVX
 	// private:
 	void PrepareBuild( const bvhvec4slice& vertices, const uint32_t* indices, const uint32_t primCount );
-	void Build( uint32_t nodeIdx = 0, uint32_t depth = 0 );
+	void Build();
+	void Build( uint32_t nodeIdx, uint32_t depth, BuildProgress& progress );
 	void BuildFullSweep( uint32_t nodeIdx = 0, uint32_t depth = 0 );
 	bool IsOccludedTLAS( const Ray& ray ) const;
 	int32_t IntersectTLAS( Ray& ray ) const;
@@ -2311,8 +2312,13 @@ void BVH::PrepareBuild( const bvhvec4slice& vertices, const uint32_t* indices, c
 	// all set; actual build happens in BVH::Build.
 }
 
-void Build_( uint32_t nodeIdx, uint32_t depth, BVH* bvh ) { bvh->Build( nodeIdx, depth ); }
-void BVH::Build( uint32_t nodeIdx, uint32_t depth )
+void BVH::Build()
+{
+	BuildProgress progress( triCount );
+	Build( 0, 0, progress );
+}
+void Build_( uint32_t nodeIdx, uint32_t depth, BVH* bvh, BuildProgress* progress ) { bvh->Build( nodeIdx, depth, *progress ); }
+void BVH::Build( uint32_t nodeIdx, uint32_t depth, BuildProgress& progress )
 {
 	// avoid threaded building for small meshes: not efficient; build multiple in parallel instead.
 	if (depth == 0)
@@ -2391,6 +2397,7 @@ void BVH::Build( uint32_t nodeIdx, uint32_t depth )
 			if (splitCost >= noSplitCost)
 			{
 				if (node.triCount > 512) printf( "Warning: failed to split large node (%i tris).\n", node.triCount );
+				ReportBuildProgress( progress, node.triCount );
 				break; // not splitting is better.
 			}
 			// in-place partition
@@ -2415,8 +2422,8 @@ void BVH::Build( uint32_t nodeIdx, uint32_t depth )
 			node.leftFirst = n, node.triCount = 0;
 			if (depth < 5 && threadedBuild)
 			{
-				std::thread t1( &Build_, n, depth + 1, this );
-				std::thread t2( &Build_, n + 1, depth + 1, this );
+				std::thread t1( &Build_, n, depth + 1, this, &progress );
+				std::thread t2( &Build_, n + 1, depth + 1, this, &progress );
 				t1.join();
 				t2.join(); // TODO: join is only needed in the 'all done' section below.
 				break;
