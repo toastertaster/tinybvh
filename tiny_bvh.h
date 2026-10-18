@@ -256,8 +256,14 @@ WARNING( "NEON not enabled in compilation." )
 #endif // TINYBVH_NO_SIMD
 
 namespace tinybvh {
-static std::function<void(float)> progress_tracker = [](float) {};
-static std::atomic<std::size_t> progress_tracker_completed_prims;
+// Progress of a single build: the number of primitives placed in leaves so far.
+// Each build owns one, so concurrent builds of different BVHs don't share it.
+struct BuildProgress
+{
+	explicit BuildProgress( const std::size_t total ) : totalPrims( total ) {}
+	const std::size_t totalPrims;
+	std::atomic<std::size_t> completedPrims{ 0 };
+};
 }
 
 // aligned memory allocation
@@ -838,6 +844,11 @@ public:
 	uint32_t* opmap = 0;			// opacity micro maps; opmapN^2 bits per triangle.
 	bool hasOpacityMicroMaps() const { return opmapN > 0; }
 	void SetOpacityMicroMaps( uint32_t* mapData, uint32_t N ) { opmap = mapData, opmapN = N; }
+	// Optional progress callback for BuildAVX, BuildHQ and Optimize, called with the
+	// fraction completed in [0,1]. It belongs to this BVH, so concurrent builds of
+	// different BVHs report independently. Threaded builds call it from several
+	// threads at once.
+	std::function<void( float )> progressCallback;
 	// Custom memory allocation
 	void* AlignedAlloc( size_t size );
 	void AlignedFree( void* ptr );
@@ -845,6 +856,11 @@ public:
 	void CopyBasePropertiesFrom( const BVHBase& original );	// copy flags from one BVH to another
 protected:
 	~BVHBase() {}
+	void ReportBuildProgress( BuildProgress& progress, const std::size_t leafPrims ) const
+	{
+		const std::size_t done = progress.completedPrims.fetch_add( leafPrims ) + leafPrims;
+		if (progressCallback) progressCallback( done / float( progress.totalPrims ) );
+	}
 	__FORCEINLINE void IntersectTri( Ray& ray, const uint32_t idx, const bvhvec4slice& verts, const uint32_t i0, const uint32_t i1, const uint32_t i2 ) const;
 	__FORCEINLINE bool TriOccludes( const Ray& ray, const bvhvec4slice& verts, const uint32_t triIdx, const uint32_t i0, const uint32_t i1, const uint32_t i2 ) const;
 	static void PrecomputeTriangle( const bvhvec4slice& vert, const uint32_t ti0, const uint32_t ti1, const uint32_t ti2, float* T );
@@ -935,10 +951,10 @@ public:
 	bool IsOccludedTLAS( const Ray& ray ) const;
 	int32_t IntersectTLAS( Ray& ray ) const;
 	void PrepareAVXBuild( const bvhvec4slice& vertices, const uint32_t* indices, const uint32_t primCount );
-	void BuildAVXSubtree( uint32_t nodeIdx, uint32_t depth, std::size_t totalPrims );
+	void BuildAVXSubtree( uint32_t nodeIdx, uint32_t depth, BuildProgress& progress );
 	void PrepareHQBuild( const bvhvec4slice& vertices, const uint32_t* indices, const uint32_t prims );
 	void BuildHQ();
-	void BuildHQTask( uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth, uint32_t sliceStart, uint32_t sliceEnd, uint32_t* triIdxB, std::size_t primCount );
+	void BuildHQTask( uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth, uint32_t sliceStart, uint32_t sliceEnd, uint32_t* triIdxB, BuildProgress& progress );
 	bool ClipFrag( const Fragment& orig, Fragment& newFrag, bvhvec3 bmin, bvhvec3 bmax, bvhvec3 minDim, const uint32_t splitAxis ) const;
 	void SplitFrag( const Fragment& orig, Fragment& left, Fragment& right, const bvhvec3& minDim, const uint32_t splitAxis, const float splitPos, bool& leftOK, bool& rightOK ) const;
 protected:
@@ -2700,15 +2716,15 @@ float BVH::NoSplitCostSAH( const int Nparent ) const
 void BuildHQTask_(
 	uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth,
 	uint32_t sliceStart, uint32_t sliceEnd, uint32_t* idxTmp, BVH* bvh,
-	std::size_t primCount
+	BuildProgress* progress
 )
 {
-	bvh->BuildHQTask( nodeIdx, depth, maxDepth, sliceStart, sliceEnd, idxTmp, primCount );
+	bvh->BuildHQTask( nodeIdx, depth, maxDepth, sliceStart, sliceEnd, idxTmp, *progress );
 }
 void BVH::BuildHQTask(
 	uint32_t nodeIdx, uint32_t depth, const uint32_t maxDepth,
 	uint32_t sliceStart, uint32_t sliceEnd, uint32_t* idxTmp,
-	std::size_t primCount
+	BuildProgress& progress
 )
 {
 	// prepare subdivision
@@ -2853,9 +2869,7 @@ void BVH::BuildHQTask(
 			{
 				for (uint32_t i = 0; i < node.triCount; i++)
 					primIdx[node.leftFirst + i] = fragment[primIdx[node.leftFirst + i]].primIdx;
-				progress_tracker(
-					(progress_tracker_completed_prims.fetch_add(node.triCount) + node.triCount) / 
-					float(primCount));
+				ReportBuildProgress( progress, node.triCount );
 				break; // not splitting is better.
 			}
 			// double-buffered partition
@@ -2964,8 +2978,8 @@ void BVH::BuildHQTask(
 			// recurse
 			if (depth < maxDepth && threadedBuild)
 			{
-				std::thread t1( &BuildHQTask_, leftChildIdx, depth + 1, maxDepth, sliceStart, (A + B) >> 1, idxTmp, this, primCount );
-				std::thread t2( &BuildHQTask_, rightChildIdx, depth + 1, maxDepth, (A + B) >> 1, sliceEnd, idxTmp, this, primCount );
+				std::thread t1( &BuildHQTask_, leftChildIdx, depth + 1, maxDepth, sliceStart, (A + B) >> 1, idxTmp, this, &progress );
+				std::thread t2( &BuildHQTask_, rightChildIdx, depth + 1, maxDepth, (A + B) >> 1, sliceEnd, idxTmp, this, &progress );
 				t1.join();
 				t2.join(); // TODO: join is only needed in the 'all done' section below.
 				break;
@@ -2999,11 +3013,11 @@ void BVH::BuildHQ()
 		nextFrag = triCount;
 	}
 
-	progress_tracker_completed_prims = 0;
+	BuildProgress progress( triCount );
 
 	// subdivide recursively
 	uint32_t nodeIdx = 0, sliceStart = 0, sliceEnd = triCount + slack, depth = 0;
-	BuildHQTask( nodeIdx, depth, 5, sliceStart, sliceEnd, idxTmp, triCount );
+	BuildHQTask( nodeIdx, depth, 5, sliceStart, sliceEnd, idxTmp, progress );
 	// all done.
 	AlignedFree( idxTmp );
 	aabbMin = bvhNode[0].aabbMin, aabbMax = bvhNode[0].aabbMax;
@@ -4424,7 +4438,7 @@ void BVH_Verbose::Optimize( const uint32_t iterations, const bool extreme, bool 
 		}
 		Refit( 0, true );
 
-		progress_tracker((i+1)/float(iterations));
+		if (progressCallback) progressCallback( (i + 1) / float( iterations ) );
 	}
 	AlignedFree( sortList );
 }
@@ -6391,8 +6405,8 @@ void BVH::BuildAVX( const bvhvec4* vertices, const uint32_t primCount )
 void BVH::BuildAVX( const bvhvec4slice& vertices )
 {
 	PrepareAVXBuild( vertices, 0, 0 );
-	progress_tracker_completed_prims = 0;
-	BuildAVXSubtree( 0u, 0u, vertices.count/3 );
+	BuildProgress progress( vertices.count / 3 );
+	BuildAVXSubtree( 0u, 0u, progress );
 }
 void BVH::BuildAVX( const bvhvec4* vertices, const uint32_t* indices, const uint32_t primCount )
 {
@@ -6403,8 +6417,8 @@ void BVH::BuildAVX( const bvhvec4* vertices, const uint32_t* indices, const uint
 void BVH::BuildAVX( const bvhvec4slice& vertices, const uint32_t* indices, const uint32_t primCount )
 {
 	PrepareAVXBuild( vertices, indices, primCount );
-	progress_tracker_completed_prims = 0;
-	BuildAVXSubtree( 0u, 0u, primCount );
+	BuildProgress progress( primCount );
+	BuildAVXSubtree( 0u, 0u, progress );
 }
 void BVH::PrepareAVXBuild( const bvhvec4slice& vertices, const uint32_t* indices, const uint32_t prims )
 {
@@ -6512,8 +6526,8 @@ void BVH::BuildAVXBinTask( const uint32_t first, const uint32_t last, __m256* bi
 	binbox[i0] = r0, binbox[AVXBINS + i1] = r1, binbox[2 * AVXBINS + i2] = r2;
 }
 
-void BuildAVXSubtree_( uint32_t n, uint32_t d, BVH* bvh, std::size_t total ) { bvh->BuildAVXSubtree( n, d, total ); }
-void BVH::BuildAVXSubtree( uint32_t nodeIdx, uint32_t depth, std::size_t total )
+void BuildAVXSubtree_( uint32_t n, uint32_t d, BVH* bvh, BuildProgress* progress ) { bvh->BuildAVXSubtree( n, d, *progress ); }
+void BVH::BuildAVXSubtree( uint32_t nodeIdx, uint32_t depth, BuildProgress& progress )
 {
 	// aligned data
 	constexpr uint32_t slices = 8;
@@ -6609,7 +6623,7 @@ void BVH::BuildAVXSubtree( uint32_t nodeIdx, uint32_t depth, std::size_t total )
 			splitCost = c_trav + c_int * rSAV * splitCost;
 			float noSplitCost = (float)node.triCount * c_int;
 			if (splitCost >= noSplitCost) {
-				progress_tracker((progress_tracker_completed_prims+=node.triCount)/float(total));
+				ReportBuildProgress( progress, node.triCount );
 				break; // not splitting is better.
 			}
 			// in-place partition
@@ -6632,8 +6646,8 @@ void BVH::BuildAVXSubtree( uint32_t nodeIdx, uint32_t depth, std::size_t total )
 			bvhNode[n + 1].leftFirst = i, bvhNode[n + 1].triCount = rightCount;
 			if (leftCount + rightCount > 2000 && depth < 5 && threadedBuild)
 			{
-				std::thread t1( &BuildAVXSubtree_, n, depth + 1, this, total );
-				std::thread t2( &BuildAVXSubtree_, n + 1, depth + 1, this, total );
+				std::thread t1( &BuildAVXSubtree_, n, depth + 1, this, &progress );
+				std::thread t2( &BuildAVXSubtree_, n + 1, depth + 1, this, &progress );
 				t1.join();
 				t2.join(); // TODO: join is only needed in the 'all done' section below.
 				break;
