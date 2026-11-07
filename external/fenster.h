@@ -38,7 +38,7 @@ struct fenster {
 	int width;
 	int height;
 	uint32_t* buf;
-	int keys[256]; /* keys are mostly ASCII, but arrows are 17..20 */
+	int keys[256] = { 0 }; /* keys are mostly ASCII, but arrows are 17..20 */
 	int mod;       /* mod is 4 bits mask, ctrl=1, shift=2, alt=4, meta=8 */
 	int x;
 	int y;
@@ -421,8 +421,12 @@ int run()
 	f.width = SCRWIDTH;
 	f.height = SCRHEIGHT;
 	f.buf = buf;
-	f.title = new char[128];
+	f.title = new char[32];
+#ifdef _MSC_VER
+	strcpy_s( f.title, 32, "tiny_bvh" );
+#else
 	strcpy( f.title, "tiny_bvh" );
+#endif
 	fenster_open( &f );
 	Timer t;
 	Init();

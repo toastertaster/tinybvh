@@ -92,7 +92,26 @@ static int mode = 0;
 // -----------------------------------------------------------
 void GLTFDemo::Init()
 {
-
+#if 0
+	// this code converts an obj file into a .bin file,
+	// which is a minimalistic format used in several examples.
+	scene.AddScene( "testdata/bunny10k.obj" );
+	Mesh* m = scene.meshPool[0];
+	FILE* f = fopen( "bunny10k.bin", "wb" );
+	int tris = m->triangles.size(), verts = tris * 3;
+	fwrite( &verts, 1, 4, f );
+	for( int i = 0; i < tris; i++ )
+	{
+		float4 v0 = m->triangles[i].vertex0;
+		float4 v1 = m->triangles[i].vertex1;
+		float4 v2 = m->triangles[i].vertex2;
+		fwrite( &v0, 1, 16, f );
+		fwrite( &v1, 1, 16, f );
+		fwrite( &v2, 1, 16, f );
+	}
+	fclose( f );
+	exit( 0 );
+#endif
 }
 
 // -----------------------------------------------------------
@@ -102,7 +121,7 @@ void GLTFDemo::InitScene1()
 {
 	// load gltf scene
 	scene.SetBVHDefault( GPU_RIGID ); // even the drone does not use BVH rebuilds.
-	scene.CacheBVHs(); // BVHs will be saved to disk for faster loading and optimization.
+	// scene.CacheBVHs(); // BVHs will be saved to disk for faster loading and optimization.
 	terrain = scene.AddScene( "./testdata/cratercity/scene.gltf", mat4::Translate( 0, -18.9f, 0 ) * mat4::RotateY( 1 ) );
 	tree1 = scene.AddScene( "./testdata/mangotree/scene.gltf", mat4::Translate( 5, -3.5f, 0 ) * mat4::Scale( 2 ) );
 	tree2 = scene.AddScene( "./testdata/smallpine/scene.gltf", mat4::Translate( 0, 0, 0 ) * mat4::Scale( 0.03f ) );
@@ -124,7 +143,7 @@ void GLTFDemo::InitScene2()
 	int terrainMesh = scene.CollapseMeshes( terrain ); // combine the meshes into a single mesh; may yield a better BVH.
 	int terrainNode = scene.FindMeshNode( terrain /* possibly a hierarchy */, terrainMesh );
 	scene.SetBVHType( drone, GPU_DYNAMIC );
-	scene.SetBVHType( terrain, GPU_STATIC );
+	scene.SetBVHType( terrain, GPU_DYNAMIC );
 	printf( "building BVHs...\n" );
 	scene.UpdateSceneGraph( 0 ); // this will build the BLASses and TLAS.
 	printf( "all done.\n" );
@@ -137,8 +156,8 @@ void GLTFDemo::InitScene2()
 		mat4 T1 = mat4::Translate( (30 + 2 * RandomFloat()) * sinf( a ), 0, (30 + 2 * RandomFloat()) * cosf( a ) );
 		float3 O( T1[3], 20, T1[11] ), D( 0, -1, 0 );
 		Ray r( float4( O, 1 ) * invTerrain, float4( D, 0 ) * invTerrain );
-		scene.meshPool[terrainMesh]->blas.staticGPU->bvh8.bvh.Intersect( r );
-		T1[7] = (O + D * r.hit.t * 0.1f /* erm... why 0.1? */).y - 0.2f;
+		scene.meshPool[terrainMesh]->blas.dynamicGPU->bvh.Intersect( r );
+		T1[7] = (O + D * r.hit.t).y - 0.2f;
 		float hsize = 0.03f + RandomFloat() * 0.025f, vsize = 0.03f + RandomFloat() * 0.015f;
 		mat4 T2 = mat4::Scale( float3( hsize, vsize, hsize ) );
 		mat4 T3 = mat4::RotateY( RandomFloat() * TWOPI ) * mat4::RotateX( PI * 1.5f );
@@ -150,10 +169,10 @@ void GLTFDemo::InitScene2()
 	printf( "done.\n" );
 
 	// create OpenCL kernels
-	init = new Kernel( "raytracer.cl", "SetRenderData" );
-	render = new Kernel( "raytracer.cl", "Render" );
-	renderNormals = new Kernel( "raytracer.cl", "RenderNormals" );
-	renderDepth = new Kernel( "raytracer.cl", "RenderDepth" );
+	init = new Kernel( "kernels/raytracer.cl", "SetRenderData" );
+	render = new Kernel( "kernels/raytracer.cl", "Render" );
+	renderNormals = new Kernel( "kernels/raytracer.cl", "RenderNormals" );
+	renderDepth = new Kernel( "kernels/raytracer.cl", "RenderDepth" );
 
 	// create OpenCL buffers
 
@@ -186,7 +205,7 @@ void GLTFDemo::InitScene2()
 			desc.opmapOffset = gpubvh2->opmap ? opmapOffset : 0x99999999;
 			node2Count += gpubvh2->usedNodes;
 			indexCount += gpubvh2->idxCount;
-			triCount += gpubvh2->triCount;
+			triCount += gpubvh2->idxCount;
 			if (gpubvh2->opmap) opmapOffset += gpubvh2->triCount * 32; // for N=32: 128 bytes = 32uints
 		}
 		else
@@ -219,10 +238,10 @@ void GLTFDemo::InitScene2()
 			BVH_GPU* gpubvh2 = mesh->blas.dynamicGPU;
 			memcpy( (BVH_GPU::BVHNode*)blasNode2->GetHostPtr() + node2Count, gpubvh2->bvhNode, gpubvh2->usedNodes * sizeof( BVH_GPU::BVHNode ) );
 			memcpy( (uint*)blasIdx->GetHostPtr() + indexCount, gpubvh2->bvh.primIdx, gpubvh2->idxCount * sizeof( uint ) );
-			memcpy( (float4*)blasTri->GetHostPtr() + triCount * 3, gpubvh2->bvh.verts.data, gpubvh2->triCount * sizeof( float4 ) * 3 );
+			memcpy( (float4*)blasTri->GetHostPtr() + triCount * 3, gpubvh2->orderedVerts.data, gpubvh2->idxCount * sizeof( float4 ) * 3 );
 			memcpy( (FatTri*)blasFatTri->GetHostPtr() + fatTriCount, mesh->triangles.data(), mesh->triangles.size() * sizeof( FatTri ) );
 			if (gpubvh2->opmap) memcpy( (uint32_t*)blasOpMap->GetHostPtr() + opmapOffset, gpubvh2->opmap, gpubvh2->triCount * 128 );
-			node2Count += gpubvh2->usedNodes, indexCount += gpubvh2->idxCount, triCount += gpubvh2->triCount;
+			node2Count += gpubvh2->usedNodes, indexCount += gpubvh2->idxCount, triCount += gpubvh2->idxCount;
 			if (gpubvh2->opmap) opmapOffset += gpubvh2->triCount * 32; // for N=32: 128 bytes = 32uints
 		}
 		else
